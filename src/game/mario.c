@@ -34,6 +34,7 @@
 #include "object_list_processor.h"
 #include "print.h"
 #include "save_file.h"
+#include "screen_transition.h"
 #include "sound_init.h"
 #include "rumble_init.h"
 #include "obj_behaviors.h"
@@ -2309,6 +2310,129 @@ void init_single_mario(struct MarioState* m) {
     if (modelIndex >= CT_MAX) { modelIndex = 0; }
     m->character = &gCharacters[modelIndex];
     obj_set_model(m->marioObj, m->character->modelId);
+}
+
+static void mario_sync_geometry_after_custom_respawn(struct MarioState *m) {
+    if (!m) { return; }
+
+    f32 ceilToFloorDist = 0.0f;
+    f32 gasLevel = 0.0f;
+
+    f32_find_wall_collision(&m->pos[0], &m->pos[1], &m->pos[2], 60.0f, 50.0f);
+    f32_find_wall_collision(&m->pos[0], &m->pos[1], &m->pos[2], 30.0f, 24.0f);
+
+    m->floorHeight = find_floor(m->pos[0], m->pos[1], m->pos[2], &m->floor);
+    if (m->floor == NULL) {
+        m->floorHeight = find_floor(m->pos[0], m->pos[1] + 200.0f, m->pos[2], &m->floor);
+    }
+
+    m->ceilHeight = vec3f_mario_ceil(&m->pos[0], m->floorHeight, &m->ceil);
+    gasLevel = find_poison_gas_level(m->pos[0], m->pos[2]);
+    m->waterLevel = find_water_level(m->pos[0], m->pos[2]);
+
+    if (m->action == ACT_DEBUG_FREE_MOVE || m->floor == NULL) {
+        return;
+    }
+
+    m->floorAngle = atan2s(m->floor->normal.z, m->floor->normal.x);
+    m->terrainSoundAddend = mario_get_terrain_sound_addend(m);
+
+    if ((m->pos[1] > m->waterLevel - 40) && mario_floor_is_slippery(m)) {
+        m->input |= INPUT_ABOVE_SLIDE;
+    }
+
+    if ((m->floor->flags & SURFACE_FLAG_DYNAMIC)
+        || (m->ceil && m->ceil->flags & SURFACE_FLAG_DYNAMIC)) {
+        ceilToFloorDist = m->ceilHeight - m->floorHeight;
+
+        if ((0.0f <= ceilToFloorDist) && (ceilToFloorDist <= 150.0f)) {
+            m->input |= INPUT_SQUISHED;
+        }
+    }
+
+    if (m->pos[1] > m->floorHeight + 100.0f) {
+        m->input |= INPUT_OFF_FLOOR;
+    }
+
+    if (m->pos[1] < (m->waterLevel - 10)) {
+        m->input |= INPUT_IN_WATER;
+    }
+
+    if (m->pos[1] < (gasLevel - 100.0f)) {
+        m->input |= INPUT_IN_POISON_GAS;
+    }
+}
+
+void mario_sync_after_custom_respawn(struct MarioState* m) {
+    if (!m || !m->marioObj) { return; }
+
+    // Arena-style mods cancel HOOK_ON_DEATH and reposition Mario directly.
+    // Clear any death warp/fade state that may already be pending so Wii U
+    // stays in the current custom level instead of briefly warping away.
+    if (sDelayedWarpOp == WARP_OP_DEATH || sDelayedWarpOp == WARP_OP_GAME_OVER) {
+        m->numLives++;
+    }
+    sDelayedWarpOp = WARP_OP_NONE;
+    sDelayedWarpTimer = 0;
+    sDelayedWarpArg = 0;
+    sSourceWarpNodeId = 0;
+    sWarpDest.type = WARP_TYPE_NOT_WARPING;
+    sWarpDest.levelNum = gCurrLevelNum;
+    sWarpDest.areaIdx = gCurrAreaIndex;
+    sWarpDest.nodeId = 0;
+    sWarpDest.arg = 0;
+    gWarpTransition.isActive = FALSE;
+    gWarpTransition.pauseRendering = FALSE;
+    reset_screen_transition_timers();
+
+    m->area = gCurrentArea;
+    m->wall = NULL;
+    m->ceil = NULL;
+    m->floor = NULL;
+    m->input = 0;
+    m->forwardVel = 0.0f;
+    vec3f_set(m->vel, 0.0f, 0.0f, 0.0f);
+    vec3s_set(m->angleVel, 0, 0, 0);
+    m->peakHeight = m->pos[1];
+    m->waterLevel = find_water_level(m->pos[0], m->pos[2]);
+
+    m->marioObj->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+    m->marioObj->header.gfx.shadowInvisible = false;
+    m->marioObj->header.gfx.disableAutomaticShadowPos = false;
+    vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+    vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
+
+    mario_sync_geometry_after_custom_respawn(m);
+    if (m->floor != NULL && m->pos[1] < m->floorHeight) {
+        m->pos[1] = m->floorHeight;
+    }
+
+    m->marioObj->oPosX = m->pos[0];
+    m->marioObj->oPosY = m->pos[1];
+    m->marioObj->oPosZ = m->pos[2];
+    m->marioObj->oVelX = 0.0f;
+    m->marioObj->oVelY = 0.0f;
+    m->marioObj->oVelZ = 0.0f;
+    m->marioObj->oFaceAnglePitch = m->faceAngle[0];
+    m->marioObj->oFaceAngleYaw = m->faceAngle[1];
+    m->marioObj->oFaceAngleRoll = m->faceAngle[2];
+    m->marioObj->oMoveAnglePitch = m->faceAngle[0];
+    m->marioObj->oMoveAngleYaw = m->faceAngle[1];
+    m->marioObj->oMoveAngleRoll = m->faceAngle[2];
+    m->marioObj->oIntangibleTimer = 0;
+    vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
+
+    if (m->area != NULL && m->area->camera != NULL) {
+        soft_reset_camera(m->area->camera);
+    }
+
+    if (m->floor != NULL && m->pos[1] <= m->waterLevel - 100) {
+        set_mario_action(m, ACT_WATER_IDLE, 0);
+    } else if (m->floor != NULL && m->pos[1] <= m->floorHeight + 4.0f) {
+        set_mario_action(m, ACT_IDLE, 0);
+    } else {
+        set_mario_action(m, ACT_FREEFALL, 0);
+    }
 }
 
 void init_mario(void) {

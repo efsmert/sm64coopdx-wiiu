@@ -847,7 +847,12 @@ s32 common_death_handler(struct MarioState *m, s32 animation, s32 frameToDeathWa
         } else {
             bool allowDeath = true;
             smlua_call_event_hooks(HOOK_ON_DEATH, m, &allowDeath);
-            if (!allowDeath) { return animFrame; }
+            if (!allowDeath) {
+#ifdef TARGET_WII_U
+                mario_sync_after_custom_respawn(m);
+#endif
+                return animFrame;
+            }
 
             if (mario_can_bubble(m)) {
                 mario_set_bubbled(m);
@@ -921,7 +926,12 @@ s32 act_quicksand_death(struct MarioState *m) {
                 m->actionState = 2;
                 bool allowDeath = true;
                 smlua_call_event_hooks(HOOK_ON_DEATH, m, &allowDeath);
-                if (!allowDeath) { return FALSE; }
+                if (!allowDeath) {
+#ifdef TARGET_WII_U
+                    mario_sync_after_custom_respawn(m);
+#endif
+                    return FALSE;
+                }
 
                 if (mario_can_bubble(m)) {
                     mario_set_bubbled(m);
@@ -945,7 +955,12 @@ s32 act_eaten_by_bubba(struct MarioState *m) {
         if (m->playerIndex == 0) {
             bool allowDeath = true;
             smlua_call_event_hooks(HOOK_ON_DEATH, m, &allowDeath);
-            if (!allowDeath) { return FALSE; }
+            if (!allowDeath) {
+#ifdef TARGET_WII_U
+                mario_sync_after_custom_respawn(m);
+#endif
+                return FALSE;
+            }
 
             if (mario_can_bubble(m)) {
                 m->health = 0xFF;
@@ -1872,7 +1887,12 @@ s32 act_squished(struct MarioState *m) {
         } else {
             bool allowDeath = true;
             smlua_call_event_hooks(HOOK_ON_DEATH, m, &allowDeath);
-            if (!allowDeath) { return FALSE; }
+            if (!allowDeath) {
+#ifdef TARGET_WII_U
+                mario_sync_after_custom_respawn(m);
+#endif
+                return FALSE;
+            }
 
             if (mario_can_bubble(m)) {
                 mario_set_bubbled(m);

@@ -10,6 +10,7 @@
 #include "engine/behavior_script.h"
 #include "engine/graph_node.h"
 #include "engine/math_util.h"
+#include "engine/lighting_engine.h"
 #include "envfx_snow.h"
 #include "game_init.h"
 #include "goddard/renderer.h"
@@ -24,6 +25,7 @@
 #include "skybox.h"
 #include "hardcoded.h"
 #include "sound_init.h"
+#include "pc/gfx/gfx_pc.h"
 #include "pc/network/network.h"
 #include "pc/lua/smlua_hooks.h"
 #include "pc/mods/mods.h"
@@ -76,6 +78,12 @@ static s8 gMarioBlinkAnimation[7] = { 1, 2, 1, 0, 1, 2, 1 };
 static s8 gMarioAttackScaleAnimation[3 * 6] = {
     10, 12, 16, 24, 10, 10, 10, 14, 20, 30, 10, 10, 10, 16, 20, 26, 26, 20,
 };
+
+static u8 geo_mario_clamp_channel(s32 value) {
+    if (value < 0) { return 0; }
+    if (value > 255) { return 255; }
+    return (u8) value;
+}
 
 struct MarioBodyState gBodyStates[MAX_PLAYERS];
 struct GraphNodeObject gMirrorMario[MAX_PLAYERS];  // copy of Mario's geo node for drawing mirror Mario
@@ -766,17 +774,58 @@ static struct PlayerColor geo_mario_get_player_color(const struct PlayerPalette 
     struct PlayerColor color = { 0 };
     u8 index = geo_get_processing_object_index();
     struct MarioBodyState* bodyState = &gBodyStates[index];
+    Color shadeColor = { bodyState->shadeR, bodyState->shadeG, bodyState->shadeB };
+    Color lightColor = { bodyState->lightR, bodyState->lightG, bodyState->lightB };
+    Vec3f lightDir = {
+        bodyState->lightingDirX + gLightingDir[0],
+        bodyState->lightingDirY + gLightingDir[1],
+        bodyState->lightingDirZ + gLightingDir[2],
+    };
+
+    for (s32 channel = 0; channel < 3; ++channel) {
+        shadeColor[channel] = geo_mario_clamp_channel((shadeColor[channel] * gLightingColor[1][channel]) / 255);
+        lightColor[channel] = geo_mario_clamp_channel((lightColor[channel] * gLightingColor[0][channel]) / 255);
+    }
+
+    if (le_is_enabled()) {
+        Vec3f torsoPos = {
+            bodyState->torsoPos[0],
+            bodyState->torsoPos[1],
+            bodyState->torsoPos[2],
+        };
+        Color ambientColor = { 0 };
+        Color lightingColor = { gLEAmbientColor[0], gLEAmbientColor[1], gLEAmbientColor[2] };
+        Vec3f dynamicLightDir = { 0 };
+
+        le_get_ambient_color(ambientColor);
+        le_calculate_lighting_color(torsoPos, lightingColor, 1.0f);
+        le_calculate_lighting_dir(torsoPos, dynamicLightDir);
+
+        for (s32 channel = 0; channel < 3; ++channel) {
+            shadeColor[channel] = geo_mario_clamp_channel((shadeColor[channel] * MAX(ambientColor[channel], 1)) / 127);
+            lightColor[channel] = geo_mario_clamp_channel((lightColor[channel] * MAX(lightingColor[channel], 1)) / 127);
+        }
+
+        lightDir[0] += dynamicLightDir[0];
+        lightDir[1] += dynamicLightDir[1];
+        lightDir[2] += dynamicLightDir[2];
+    }
+
+    if ((lightDir[0] != 0.0f) || (lightDir[1] != 0.0f) || (lightDir[2] != 0.0f)) {
+        vec3f_normalize(lightDir);
+    }
+
     for (s32 part = 0; part != PLAYER_PART_MAX; ++part) {
         color.parts[part] = (Lights1) gdSPDefLights1(
             // Shadow
-            palette->parts[part][0] * bodyState->shadeR / 255.0f,
-            palette->parts[part][1] * bodyState->shadeG / 255.0f,
-            palette->parts[part][2] * bodyState->shadeB / 255.0f,
+            palette->parts[part][0] * shadeColor[0] / 255.0f,
+            palette->parts[part][1] * shadeColor[1] / 255.0f,
+            palette->parts[part][2] * shadeColor[2] / 255.0f,
             // Light
-            palette->parts[part][0] * bodyState->lightR / 255.0f,
-            palette->parts[part][1] * bodyState->lightG / 255.0f,
-            palette->parts[part][2] * bodyState->lightB / 255.0f,
-            0x28 + bodyState->lightingDirX * 127.0f, 0x28 + bodyState->lightingDirY * 127.0f, 0x28 + bodyState->lightingDirZ * 127.0f
+            palette->parts[part][0] * lightColor[0] / 255.0f,
+            palette->parts[part][1] * lightColor[1] / 255.0f,
+            palette->parts[part][2] * lightColor[2] / 255.0f,
+            0x28 + lightDir[0] * 127.0f, 0x28 + lightDir[1] * 127.0f, 0x28 + lightDir[2] * 127.0f
         );
     }
     return color;

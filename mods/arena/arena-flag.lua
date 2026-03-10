@@ -225,8 +225,7 @@ function bhv_arena_flag_check_collect(obj)
         return
     end
 
-    local i = 0
-    while i < MAX_PLAYERS do
+    for i = 0, MAX_PLAYERS - 1 do
         local m  = gMarioStates[i]
         local player = m.marioObj
         local yDist = math.abs(obj.oPosY - player.oPosY)
@@ -236,7 +235,6 @@ function bhv_arena_flag_check_collect(obj)
                 return
             end
         end
-        i = i + 1
     end
 end
 
@@ -289,13 +287,11 @@ function bhv_arena_flag_check_death(npVictim)
     if npVictim == nil then
         return
     end
-    local teamNum = 0
-    while teamNum <= 2 do
+    for teamNum = 0, 2 do
         local data = gArenaFlagInfo[teamNum]
         if data ~= nil and data.obj ~= nil and npVictim.globalIndex == data.obj.oArenaFlagHeldByGlobal then
             bhv_arena_flag_return(data.obj, true)
         end
-        teamNum = teamNum + 1
     end
 end
 
@@ -316,13 +312,11 @@ function bhv_arena_flag_check_return(obj)
 end
 
 function bhv_arena_flag_reset()
-    local teamNum = 0
-    while teamNum <= 2 do
+    for teamNum = 0, 2 do
         local data = gArenaFlagInfo[teamNum]
         if data ~= nil and data.obj ~= nil then
             bhv_arena_flag_return(data.obj, false)
         end
-        teamNum = teamNum + 1
     end
 end
 
@@ -341,13 +335,11 @@ end
 
 function is_holding_flag(m)
     local np = gNetworkPlayers[m.playerIndex]
-    local teamNum = 0
-    while teamNum <= 2 do
+    for teamNum = 0, 2 do
         local data = gArenaFlagInfo[teamNum]
         if data ~= nil and data.obj ~= nil and np.globalIndex == data.obj.oArenaFlagHeldByGlobal then
             return true
         end
-        teamNum = teamNum + 1
     end
     return false
 end

@@ -520,6 +520,10 @@ function player_respawn(m)
         m.pos.y = spawn.pos.y
         m.pos.z = spawn.pos.z
         m.faceAngle.y = spawn.yaw
+    else
+        m.pos.x = 0
+        m.pos.y = 0
+        m.pos.z = 0
     end
 
     -- reset the rest of the variables

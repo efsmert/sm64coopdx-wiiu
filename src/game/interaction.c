@@ -2436,7 +2436,12 @@ void check_death_barrier(struct MarioState *m) {
     if (m->pos[1] < m->floorHeight + 2048.0f) {
         bool allowDeath = true;
         smlua_call_event_hooks(HOOK_ON_DEATH, m, &allowDeath);
-        if (!allowDeath) { return; }
+        if (!allowDeath) {
+#ifdef TARGET_WII_U
+            mario_sync_after_custom_respawn(m);
+#endif
+            return;
+        }
 
         if (mario_can_bubble(m)) {
             switch (gCurrCourseNum) {

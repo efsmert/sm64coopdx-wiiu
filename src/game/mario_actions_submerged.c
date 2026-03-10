@@ -1001,7 +1001,12 @@ static s32 act_drowning(struct MarioState *m) {
                 } else {
                     bool allowDeath = true;
                     smlua_call_event_hooks(HOOK_ON_DEATH, m, &allowDeath);
-                    if (!allowDeath) { return FALSE; }
+                    if (!allowDeath) {
+#ifdef TARGET_WII_U
+                        mario_sync_after_custom_respawn(m);
+#endif
+                        return FALSE;
+                    }
 
                     if (mario_can_bubble(m)) {
                         mario_set_bubbled(m);
@@ -1036,7 +1041,12 @@ static s32 act_water_death(struct MarioState *m) {
         } else {
             bool allowDeath = true;
             smlua_call_event_hooks(HOOK_ON_DEATH, m, &allowDeath);
-            if (!allowDeath) { return FALSE; }
+            if (!allowDeath) {
+#ifdef TARGET_WII_U
+                mario_sync_after_custom_respawn(m);
+#endif
+                return FALSE;
+            }
 
             if (mario_can_bubble(m)) {
                 mario_set_bubbled(m);
@@ -1162,7 +1172,13 @@ static s32 act_caught_in_whirlpool(struct MarioState *m) {
             } else {
                 bool allowDeath = true;
                 smlua_call_event_hooks(HOOK_ON_DEATH, m, &allowDeath);
-                if (!allowDeath) { reset_rumble_timers(m); return FALSE; }
+                if (!allowDeath) {
+                    reset_rumble_timers(m);
+#ifdef TARGET_WII_U
+                    mario_sync_after_custom_respawn(m);
+#endif
+                    return FALSE;
+                }
 
                 if (mario_can_bubble(m)) {
                     mario_set_bubbled(m);

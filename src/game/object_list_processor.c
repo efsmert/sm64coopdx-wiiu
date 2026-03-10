@@ -1,5 +1,4 @@
 #include <PR/ultratypes.h>
-
 #include "sm64.h"
 #include "area.h"
 #include "behavior_data.h"
@@ -25,6 +24,10 @@
 #include "engine/math_util.h"
 #include "pc/network/network.h"
 #include "pc/lua/smlua.h"
+#include "pc/lua/smlua_hooks.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#endif
 
 /**
  * Flags controlling what debug info is displayed.
@@ -487,6 +490,9 @@ void unload_objects_from_area(UNUSED s32 unused, s32 areaIndex) {
  * Spawn objects given a list of SpawnInfos. Called when loading an area.
  */
 void spawn_objects_from_info(UNUSED s32 unused, struct SpawnInfo *spawnInfo) {
+#ifdef TARGET_WII_U
+    static u32 sHookedSpawnLogCount = 0;
+#endif
     gObjectLists = gObjectListArray;
     gTimeStopState = 0;
 
@@ -526,6 +532,20 @@ void spawn_objects_from_info(UNUSED s32 unused, struct SpawnInfo *spawnInfo) {
 
                 object->behavior = smlua_override_behavior(script);
                 object->unused1 = 0;
+
+#ifdef TARGET_WII_U
+                if (sHookedSpawnLogCount < 32 && smlua_is_behavior_hooked(object->behavior)) {
+                    const u32 behaviorId = get_id_from_behavior(object->behavior);
+                    const char *behaviorName = smlua_get_name_from_hooked_behavior_id(behaviorId);
+                    OSReport("arena-hooked-spawn: bhv=%u name=%s pos=(%d,%d,%d) ang=(%d,%d,%d) rawBeh=%08x objBeh=%08x sync=%u\n",
+                             (unsigned) behaviorId,
+                             behaviorName ? behaviorName : "?",
+                             (int) spawnInfo->startPos[0], (int) spawnInfo->startPos[1], (int) spawnInfo->startPos[2],
+                             (int) spawnInfo->startAngle[0], (int) spawnInfo->startAngle[1], (int) spawnInfo->startAngle[2],
+                             (unsigned) spawnInfo->behaviorArg, (unsigned) object->oBehParams, (unsigned) spawnInfo->syncID);
+                    sHookedSpawnLogCount++;
+                }
+#endif
 
                 // set the sync id
                 if (spawnInfo->syncID) {

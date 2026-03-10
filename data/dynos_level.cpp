@@ -64,17 +64,41 @@ u64 DynOS_Level_CmdGet(void *aCmd, u64 aOffset) {
 }
 
 template <typename T>
-static T DynOS_Level_CmdRead(void *aCmd, u64 aOffset, bool swapScalar = true) {
+static T DynOS_Level_CmdRead(void *aCmd, u64 aOffset, bool swapScalar = true, bool forceSwap = false) {
     T value = (T) 0;
     u64 _Offset = (((aOffset) & 3llu) | (((aOffset) & ~3llu) << (sizeof(void *) >> 3llu)));
     memcpy(&value, (void *) ((uintptr_t) aCmd + _Offset), sizeof(value));
-    if (swapScalar && sDynosSwapCmdScalarFields) {
+    if (swapScalar && (forceSwap || sDynosSwapCmdScalarFields)) {
         // DynOS custom level scripts are produced on little-endian hosts. When
         // parsing them on a big-endian target (Wii U), swap multi-byte scalar
         // fields (s16/u16/s32/u32/f32/etc).
         value = DynOS_EndianFix<T>::Read(value);
     }
     return value;
+}
+
+extern "C" u8 DynOS_Level_CmdReadU8(void *aCmd, u64 aOffset) {
+    return DynOS_Level_CmdRead<u8>(aCmd, aOffset);
+}
+
+extern "C" s16 DynOS_Level_CmdReadS16(void *aCmd, u64 aOffset) {
+    return DynOS_Level_CmdRead<s16>(aCmd, aOffset, true, true);
+}
+
+extern "C" u16 DynOS_Level_CmdReadU16(void *aCmd, u64 aOffset) {
+    return DynOS_Level_CmdRead<u16>(aCmd, aOffset, true, true);
+}
+
+extern "C" s32 DynOS_Level_CmdReadS32(void *aCmd, u64 aOffset) {
+    return DynOS_Level_CmdRead<s32>(aCmd, aOffset, true, true);
+}
+
+extern "C" u32 DynOS_Level_CmdReadU32(void *aCmd, u64 aOffset) {
+    return DynOS_Level_CmdRead<u32>(aCmd, aOffset, true, true);
+}
+
+extern "C" uintptr_t DynOS_Level_CmdReadPointer(void *aCmd, u64 aOffset) {
+    return DynOS_Level_CmdRead<uintptr_t>(aCmd, aOffset, false);
 }
 
 LvlCmd *DynOS_Level_CmdNext(LvlCmd *aCmd) {

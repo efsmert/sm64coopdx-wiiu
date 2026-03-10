@@ -1,4 +1,10 @@
 #include "dynos.cpp.h"
+extern "C" u8 DynOS_Level_CmdReadU8(void *aCmd, u64 aOffset);
+extern "C" s16 DynOS_Level_CmdReadS16(void *aCmd, u64 aOffset);
+extern "C" u16 DynOS_Level_CmdReadU16(void *aCmd, u64 aOffset);
+extern "C" s32 DynOS_Level_CmdReadS32(void *aCmd, u64 aOffset);
+extern "C" u32 DynOS_Level_CmdReadU32(void *aCmd, u64 aOffset);
+extern "C" uintptr_t DynOS_Level_CmdReadPointer(void *aCmd, u64 aOffset);
 extern "C" {
 #include "game/moving_texture.h"
 #include "game/hardcoded.h"
@@ -218,6 +224,30 @@ bool dynos_level_is_custom_geo_layout_ptr(void *ptr) {
 
 u64 dynos_level_cmd_get(void *cmd, u64 offset) {
     return DynOS_Level_CmdGet(cmd, offset);
+}
+
+u8 dynos_level_cmd_read_u8(void *cmd, u64 offset) {
+    return DynOS_Level_CmdReadU8(cmd, offset);
+}
+
+s16 dynos_level_cmd_read_s16(void *cmd, u64 offset) {
+    return DynOS_Level_CmdReadS16(cmd, offset);
+}
+
+u16 dynos_level_cmd_read_u16(void *cmd, u64 offset) {
+    return DynOS_Level_CmdReadU16(cmd, offset);
+}
+
+s32 dynos_level_cmd_read_s32(void *cmd, u64 offset) {
+    return DynOS_Level_CmdReadS32(cmd, offset);
+}
+
+u32 dynos_level_cmd_read_u32(void *cmd, u64 offset) {
+    return DynOS_Level_CmdReadU32(cmd, offset);
+}
+
+uintptr_t dynos_level_cmd_read_pointer(void *cmd, u64 offset) {
+    return DynOS_Level_CmdReadPointer(cmd, offset);
 }
 
 void dynos_level_cmd_next(void *cmd) {

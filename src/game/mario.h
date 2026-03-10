@@ -300,6 +300,7 @@ s32 force_idle_state(struct MarioState* m);
 Initializes the fields of a single `MarioState` structure when the player spawns or respawns. Sets starting position, velocity, action, and various internal flags
 |descriptionEnd| */
 void init_single_mario(struct MarioState* m);
+void mario_sync_after_custom_respawn(struct MarioState* m);
 
 void init_mario(void);
 void init_mario_single_from_save_file(struct MarioState* m, u16 index);

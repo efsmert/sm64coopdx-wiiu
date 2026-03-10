@@ -1,9 +1,5 @@
 #include <ultra64.h>
 #include <string.h>
-#ifdef TARGET_WII_U
-#include <coreinit/debug.h>
-#endif
-
 #include "sm64.h"
 #include "audio/external.h"
 #include "buffers/framebuffers.h"
@@ -29,7 +25,11 @@
 #include "surface_collision.h"
 #include "surface_load.h"
 #include "level_table.h"
+#include "data/dynos.c.h"
 #include "pc/lua/utils/smlua_model_utils.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#endif
 #include "pc/lua/smlua.h"
 #include "pc/djui/djui.h"
 #include "pc/debug_context.h"
@@ -67,6 +67,77 @@ static uintptr_t *sStackBase = NULL;
 static s16 sScriptStatus;
 static s32 sRegister;
 static struct LevelCommand *sCurrentCmd;
+
+#ifdef TARGET_WII_U
+static u32 sLevelHookedObjectLogCount = 0;
+static void level_wiiu_log_hooked_spawn(const char *label, struct SpawnInfo *spawnInfo, u32 extra) {
+    if (spawnInfo == NULL || spawnInfo->behaviorScript == NULL || sLevelHookedObjectLogCount >= 32) { return; }
+    if (!smlua_is_behavior_hooked((BehaviorScript *) spawnInfo->behaviorScript)) { return; }
+    const u32 behaviorId = get_id_from_behavior((const BehaviorScript *) spawnInfo->behaviorScript);
+    const char *behaviorName = smlua_get_name_from_hooked_behavior_id(behaviorId);
+
+    OSReport("arena-levelcmd: %s type=%02x pos=(%d,%d,%d) ang=(%d,%d,%d) beh=%08x extra=%08x sync=%u bhv=%u name=%s\n",
+             label ? label : "?",
+             (unsigned) sCurrentCmd->type,
+             (int) spawnInfo->startPos[0], (int) spawnInfo->startPos[1], (int) spawnInfo->startPos[2],
+             (int) spawnInfo->startAngle[0], (int) spawnInfo->startAngle[1], (int) spawnInfo->startAngle[2],
+             (unsigned) spawnInfo->behaviorArg,
+             (unsigned) extra,
+             (unsigned) spawnInfo->syncID,
+             (unsigned) behaviorId,
+             behaviorName ? behaviorName : "?");
+    sLevelHookedObjectLogCount++;
+}
+#else
+static void level_wiiu_log_hooked_spawn(const char *label, struct SpawnInfo *spawnInfo, u32 extra) {
+    (void) label;
+    (void) spawnInfo;
+    (void) extra;
+}
+#endif
+
+static inline bool level_cmd_is_custom(void) {
+    return gLevelScriptModIndex >= 0;
+}
+
+static inline u8 level_cmd_read_u8(u32 offset) {
+    return level_cmd_is_custom() ? dynos_level_cmd_read_u8(sCurrentCmd, offset) : CMD_GET(u8, offset);
+}
+
+static inline s16 level_cmd_read_s16_native(u32 offset) {
+    return level_cmd_is_custom() ? dynos_level_cmd_read_s16(sCurrentCmd, offset) : CMD_GET(s16, offset);
+}
+
+static inline u16 level_cmd_read_u16_native(u32 offset) {
+    return level_cmd_is_custom() ? dynos_level_cmd_read_u16(sCurrentCmd, offset) : CMD_GET(u16, offset);
+}
+
+static inline s32 level_cmd_read_s32_native(u32 offset) {
+    return level_cmd_is_custom() ? dynos_level_cmd_read_s32(sCurrentCmd, offset) : CMD_GET(s32, offset);
+}
+
+static inline u32 level_cmd_read_u32_native(u32 offset) {
+    return level_cmd_is_custom() ? dynos_level_cmd_read_u32(sCurrentCmd, offset) : CMD_GET(u32, offset);
+}
+
+static inline uintptr_t level_cmd_read_pointer_native(u32 offset) {
+    return level_cmd_is_custom() ? dynos_level_cmd_read_pointer(sCurrentCmd, offset) : CMD_GET(uintptr_t, offset);
+}
+
+static inline u32 level_cmd_normalize_hooked_behavior_arg(const BehaviorScript *behaviorScript, u32 behaviorArg) {
+    if (!level_cmd_is_custom() || behaviorScript == NULL || !smlua_is_behavior_hooked(behaviorScript)) {
+        return behaviorArg;
+    }
+
+    // Many custom Lua level objects use a single-byte behParam but then read it
+    // through the standard SM64 top-byte convention (`oBehParams >> 24`).
+    // Mirror one-byte values into the top byte so both conventions resolve.
+    if ((behaviorArg & 0xFFFFFF00u) == 0) {
+        return behaviorArg | (behaviorArg << 24);
+    }
+
+    return behaviorArg;
+}
 
 #ifdef TARGET_WII_U
 static inline s16 level_cmd_read_s16(u32 offset) {
@@ -551,9 +622,9 @@ static void level_cmd_23(void) {
 }
 
 static void level_cmd_init_mario(void) {
-    UNUSED u32 behaviorArg = CMD_GET_U32(4);
-    void* behaviorScript = CMD_GET(void*, 8);
-    u16 slot = CMD_GET(u8, 3);
+    UNUSED u32 behaviorArg = level_cmd_read_u32_native(4);
+    void* behaviorScript = (void*) level_cmd_read_pointer_native(8);
+    u16 slot = level_cmd_read_u8(3);
     struct GraphNode* unk18 = dynos_model_get_geo(slot);
 
     struct SpawnInfo* lastSpawnInfo = NULL;
@@ -584,23 +655,26 @@ static void level_cmd_place_object(void) {
     u16 model;
     struct SpawnInfo *spawnInfo;
 
-    if (sCurrAreaIndex != -1 && (gLevelValues.disableActs || (CMD_GET(u8, 2) & val7) || CMD_GET(u8, 2) == 0x1F)) {
-        model = CMD_GET(u8, 3);
+    u8 acts = level_cmd_read_u8(2);
+    if (sCurrAreaIndex != -1 && (gLevelValues.disableActs || (acts & val7) || acts == 0x1F)) {
+        model = level_cmd_read_u8(3);
         spawnInfo = dynamic_pool_alloc(gLevelPool, sizeof(struct SpawnInfo));
 
-        spawnInfo->startPos[0] = CMD_GET_S16(4);
-        spawnInfo->startPos[1] = CMD_GET_S16(6);
-        spawnInfo->startPos[2] = CMD_GET_S16(8);
+        spawnInfo->startPos[0] = level_cmd_read_s16_native(4);
+        spawnInfo->startPos[1] = level_cmd_read_s16_native(6);
+        spawnInfo->startPos[2] = level_cmd_read_s16_native(8);
 
-        spawnInfo->startAngle[0] = CMD_GET_S16(10) * 0x8000 / 180;
-        spawnInfo->startAngle[1] = CMD_GET_S16(12) * 0x8000 / 180;
-        spawnInfo->startAngle[2] = CMD_GET_S16(14) * 0x8000 / 180;
+        spawnInfo->startAngle[0] = level_cmd_read_s16_native(10) * 0x8000 / 180;
+        spawnInfo->startAngle[1] = level_cmd_read_s16_native(12) * 0x8000 / 180;
+        spawnInfo->startAngle[2] = level_cmd_read_s16_native(14) * 0x8000 / 180;
 
         spawnInfo->areaIndex = sCurrAreaIndex;
         spawnInfo->activeAreaIndex = sCurrAreaIndex;
 
-        spawnInfo->behaviorArg = CMD_GET_U32(16);
-        spawnInfo->behaviorScript = CMD_GET(void *, 20);
+        spawnInfo->behaviorScript = (BehaviorScript*) level_cmd_read_pointer_native(20);
+        u32 behaviorArg = level_cmd_read_u32_native(16);
+        spawnInfo->behaviorArg = level_cmd_normalize_hooked_behavior_arg(
+            (const BehaviorScript *) spawnInfo->behaviorScript, behaviorArg);
         spawnInfo->unk18 = dynos_model_get_geo(model);
         spawnInfo->next = gAreas[sCurrAreaIndex].objectSpawnInfos;
 
@@ -608,6 +682,7 @@ static void level_cmd_place_object(void) {
         gAreas[sCurrAreaIndex].nextSyncID += 10;
 
         gAreas[sCurrAreaIndex].objectSpawnInfos = spawnInfo;
+        level_wiiu_log_hooked_spawn("obj", spawnInfo, acts);
         area_check_red_coin_or_secret(spawnInfo->behaviorScript, false);
     }
 
@@ -619,10 +694,10 @@ static void level_cmd_create_warp_node(void) {
         struct ObjectWarpNode *warpNode =
             dynamic_pool_alloc(gLevelPool, sizeof(struct ObjectWarpNode));
 
-        warpNode->node.id = CMD_GET(u8, 2);
-        warpNode->node.destLevel = CMD_GET(u8, 3) + CMD_GET(u8, 6);
-        warpNode->node.destArea = CMD_GET(u8, 4);
-        warpNode->node.destNode = CMD_GET(u8, 5);
+        warpNode->node.id = level_cmd_read_u8(2);
+        warpNode->node.destLevel = level_cmd_read_u8(3) + level_cmd_read_u8(6);
+        warpNode->node.destArea = level_cmd_read_u8(4);
+        warpNode->node.destNode = level_cmd_read_u8(5);
 
         warpNode->object = NULL;
 
@@ -646,14 +721,14 @@ static void level_cmd_create_instant_warp(void) {
             }
         }
 
-        u8 warpIndex = CMD_GET(u8, 2);
+        u8 warpIndex = level_cmd_read_u8(2);
         if (warpIndex >= INSTANT_WARP_INDEX_STOP) {
             LOG_ERROR("Instant warp index out of bounds: %u", warpIndex);
             sCurrentCmd = CMD_NEXT;
             return;
         }
 
-        u8 areaIndex = CMD_GET(u8, 3);
+        u8 areaIndex = level_cmd_read_u8(3);
         if (areaIndex >= MAX_AREAS) {
             LOG_ERROR("Instant warp area index out of bounds: %u", areaIndex);
             sCurrentCmd = CMD_NEXT;
@@ -665,9 +740,9 @@ static void level_cmd_create_instant_warp(void) {
         warp->id = 1;
         warp->area = areaIndex;
 
-        warp->displacement[0] = CMD_GET_S16(4);
-        warp->displacement[1] = CMD_GET_S16(6);
-        warp->displacement[2] = CMD_GET_S16(8);
+        warp->displacement[0] = level_cmd_read_s16_native(4);
+        warp->displacement[1] = level_cmd_read_s16_native(6);
+        warp->displacement[2] = level_cmd_read_s16_native(8);
     }
 
     sCurrentCmd = CMD_NEXT;
@@ -813,11 +888,11 @@ static void level_cmd_unload_area(void) {
 }
 
 static void level_cmd_set_mario_start_pos(void) {
-    s8 areaIndex = CMD_GET(u8, 2);
-    s16 x = CMD_GET_S16(6);
-    s16 y = CMD_GET_S16(8);
-    s16 z = CMD_GET_S16(10);
-    s16 angle = CMD_GET_S16(4);
+    s8 areaIndex = level_cmd_read_u8(2);
+    s16 x = level_cmd_read_s16_native(6);
+    s16 y = level_cmd_read_s16_native(8);
+    s16 z = level_cmd_read_s16_native(10);
+    s16 angle = level_cmd_read_s16_native(4);
     for (s32 i = 0; i < MAX_PLAYERS; i++) {
         gPlayerSpawnInfos[i].areaIndex = areaIndex;
         vec3s_set(gPlayerSpawnInfos[i].startPos, x, y, z);
@@ -961,15 +1036,15 @@ static void level_cmd_cleardemoptr(void)
 // coop
 //
 
-static bool find_lua_param(uintptr_t *param, u32 offset, u32 luaParams, u32 luaParamFlag) {
-    *param = CMD_GET(uintptr_t, offset);
+static bool resolve_lua_param_u32(uintptr_t *param, u32 rawValue, u32 luaParams, u32 luaParamFlag) {
+    *param = rawValue;
     if (luaParams & luaParamFlag) {
         if (gLevelScriptModIndex == -1) {
             LOG_ERROR("Could not find level script mod index");
             return false;
         }
 
-        const char *paramStr = dynos_level_get_token(*param);
+        const char *paramStr = dynos_level_get_token((u32) rawValue);
         gSmLuaConvertSuccess = true;
         *param = smlua_get_integer_mod_variable(gLevelScriptModIndex, paramStr);
 
@@ -986,13 +1061,67 @@ static bool find_lua_param(uintptr_t *param, u32 offset, u32 luaParams, u32 luaP
     return true;
 }
 
-#define get_lua_param(name, type, flag) \
-    uintptr_t name##Param; \
-    if (!find_lua_param(&name##Param, flag##_OFFSET(cmdType), luaParams, flag)) { \
-        sCurrentCmd = CMD_NEXT; \
-        return; \
-    } \
-    type name = (type) name##Param;
+static bool read_lua_param_u8(uintptr_t *param, u8 cmdType, u32 luaParams, u32 luaParamFlag) {
+    const u32 offset = OBJECT_EXT_LUA_ACTS_OFFSET(cmdType);
+    const u32 rawValue = (luaParams & luaParamFlag)
+        ? (u32) dynos_level_cmd_read_pointer(sCurrentCmd, offset)
+        : dynos_level_cmd_read_u8(sCurrentCmd, offset);
+    return resolve_lua_param_u32(param, rawValue, luaParams, luaParamFlag);
+}
+
+static u32 read_lua_param_offset(u8 cmdType, u32 luaParamFlag) {
+    switch (luaParamFlag) {
+        case OBJECT_EXT_LUA_MODEL:      return OBJECT_EXT_LUA_MODEL_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_POS_X:      return OBJECT_EXT_LUA_POS_X_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_POS_Y:      return OBJECT_EXT_LUA_POS_Y_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_POS_Z:      return OBJECT_EXT_LUA_POS_Z_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_ANGLE_X:    return OBJECT_EXT_LUA_ANGLE_X_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_ANGLE_Y:    return OBJECT_EXT_LUA_ANGLE_Y_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_ANGLE_Z:    return OBJECT_EXT_LUA_ANGLE_Z_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_BEH_PARAMS: return OBJECT_EXT_LUA_BEH_PARAMS_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_BEHAVIOR:   return OBJECT_EXT_LUA_BEHAVIOR_OFFSET(cmdType);
+        case OBJECT_EXT_LUA_ACTS:       return OBJECT_EXT_LUA_ACTS_OFFSET(cmdType);
+        default:                        return 0;
+    }
+}
+
+static bool read_lua_param_s16(uintptr_t *param, u8 cmdType, u32 luaParams, u32 luaParamFlag) {
+    const u32 offset = read_lua_param_offset(cmdType, luaParamFlag);
+    const u32 rawValue = (luaParams & luaParamFlag)
+        ? (u32) dynos_level_cmd_read_pointer(sCurrentCmd, offset)
+        : (u32) (u16) dynos_level_cmd_read_s16(sCurrentCmd, offset);
+    return resolve_lua_param_u32(param, rawValue, luaParams, luaParamFlag);
+}
+
+static bool read_lua_param_u32(uintptr_t *param, u8 cmdType, u32 luaParams, u32 luaParamFlag) {
+    const u32 offset = read_lua_param_offset(cmdType, luaParamFlag);
+    u32 rawValue = (luaParams & luaParamFlag)
+        ? (u32) dynos_level_cmd_read_pointer(sCurrentCmd, offset)
+        : dynos_level_cmd_read_u32(sCurrentCmd, offset);
+
+    if (!(luaParams & luaParamFlag) && cmdType == 0x3F && luaParamFlag == OBJECT_EXT_LUA_MODEL) {
+        rawValue = dynos_level_cmd_read_u8(sCurrentCmd, offset);
+    }
+
+    return resolve_lua_param_u32(param, rawValue, luaParams, luaParamFlag);
+}
+
+static bool read_lua_param_behavior(uintptr_t *param, u8 cmdType, u32 luaParams, u32 luaParamFlag) {
+    const u32 offset = read_lua_param_offset(cmdType, luaParamFlag);
+    if (luaParams & luaParamFlag) {
+        return resolve_lua_param_u32(param, (u32) dynos_level_cmd_read_pointer(sCurrentCmd, offset), luaParams, luaParamFlag);
+    }
+
+    *param = dynos_level_cmd_read_pointer(sCurrentCmd, offset);
+    return true;
+}
+
+static bool read_show_dialog_param(uintptr_t *param, u32 offset, u32 luaParams, u32 luaParamFlag) {
+    const u32 rawValue = (luaParams & luaParamFlag)
+        ? (u32) dynos_level_cmd_read_pointer(sCurrentCmd, offset)
+        : dynos_level_cmd_read_u32(sCurrentCmd, offset);
+    return resolve_lua_param_u32(param, rawValue, luaParams, luaParamFlag);
+}
 
 static void level_cmd_place_object_ext_lua_params(void) {
     u8 val7 = 1 << (gCurrActNum - 1);
@@ -1005,20 +1134,49 @@ static void level_cmd_place_object_ext_lua_params(void) {
         CMD_GET_U16(2)
     )));
 
-    get_lua_param(acts, u8, OBJECT_EXT_LUA_ACTS);
+    uintptr_t actsParam;
+    if (!read_lua_param_u8(&actsParam, cmdType, luaParams, OBJECT_EXT_LUA_ACTS)) {
+        sCurrentCmd = CMD_NEXT;
+        return;
+    }
+    u8 acts = (u8) actsParam;
 
     if (sCurrAreaIndex != -1 && (gLevelValues.disableActs || (acts & val7) || acts == 0x1F)) {
         spawnInfo = dynamic_pool_alloc(gLevelPool, sizeof(struct SpawnInfo));
 
-        get_lua_param(modelId, u32, OBJECT_EXT_LUA_MODEL);
-        get_lua_param(posX, s16, OBJECT_EXT_LUA_POS_X);
-        get_lua_param(posY, s16, OBJECT_EXT_LUA_POS_Y);
-        get_lua_param(posZ, s16, OBJECT_EXT_LUA_POS_Z);
-        get_lua_param(angleX, s16, OBJECT_EXT_LUA_ANGLE_X);
-        get_lua_param(angleY, s16, OBJECT_EXT_LUA_ANGLE_Y);
-        get_lua_param(angleZ, s16, OBJECT_EXT_LUA_ANGLE_Z);
-        get_lua_param(behParam, u32, OBJECT_EXT_LUA_BEH_PARAMS);
-        get_lua_param(behavior, uintptr_t, OBJECT_EXT_LUA_BEHAVIOR);
+        uintptr_t modelIdParam;
+        uintptr_t posXParam;
+        uintptr_t posYParam;
+        uintptr_t posZParam;
+        uintptr_t angleXParam;
+        uintptr_t angleYParam;
+        uintptr_t angleZParam;
+        uintptr_t behParamParam;
+        uintptr_t behaviorParam;
+
+        if (!read_lua_param_u32(&modelIdParam, cmdType, luaParams, OBJECT_EXT_LUA_MODEL) ||
+            !read_lua_param_s16(&posXParam, cmdType, luaParams, OBJECT_EXT_LUA_POS_X) ||
+            !read_lua_param_s16(&posYParam, cmdType, luaParams, OBJECT_EXT_LUA_POS_Y) ||
+            !read_lua_param_s16(&posZParam, cmdType, luaParams, OBJECT_EXT_LUA_POS_Z) ||
+            !read_lua_param_s16(&angleXParam, cmdType, luaParams, OBJECT_EXT_LUA_ANGLE_X) ||
+            !read_lua_param_s16(&angleYParam, cmdType, luaParams, OBJECT_EXT_LUA_ANGLE_Y) ||
+            !read_lua_param_s16(&angleZParam, cmdType, luaParams, OBJECT_EXT_LUA_ANGLE_Z) ||
+            !read_lua_param_u32(&behParamParam, cmdType, luaParams, OBJECT_EXT_LUA_BEH_PARAMS) ||
+            !read_lua_param_behavior(&behaviorParam, cmdType, luaParams, OBJECT_EXT_LUA_BEHAVIOR)) {
+            sCurrentCmd = CMD_NEXT;
+            return;
+        }
+
+        u32 modelId = (u32) modelIdParam;
+        s16 posX = (s16) posXParam;
+        s16 posY = (s16) posYParam;
+        s16 posZ = (s16) posZParam;
+        s16 angleX = (s16) angleXParam;
+        s16 angleY = (s16) angleYParam;
+        s16 angleZ = (s16) angleZParam;
+        u32 behParam = (u32) behParamParam;
+        uintptr_t behavior = behaviorParam;
+        BehaviorScript *behaviorScript = NULL;
 
         spawnInfo->startPos[0] = posX;
         spawnInfo->startPos[1] = posY;
@@ -1030,8 +1188,6 @@ static void level_cmd_place_object_ext_lua_params(void) {
         spawnInfo->areaIndex = sCurrAreaIndex;
         spawnInfo->activeAreaIndex = sCurrAreaIndex;
 
-        spawnInfo->behaviorArg = behParam;
-
         if (luaParams & OBJECT_EXT_LUA_MODEL) {
             u16 slot = smlua_model_util_load((enum ModelExtendedId) modelId);
             spawnInfo->unk18 = dynos_model_get_geo(slot);
@@ -1040,10 +1196,13 @@ static void level_cmd_place_object_ext_lua_params(void) {
         }
 
         if (luaParams & OBJECT_EXT_LUA_BEHAVIOR) {
-            spawnInfo->behaviorScript = (BehaviorScript *) get_behavior_from_id((enum BehaviorId) behavior);
+            behaviorScript = (BehaviorScript *) get_behavior_from_id((enum BehaviorId) behavior);
         } else {
-            spawnInfo->behaviorScript = (BehaviorScript *) behavior;
+            behaviorScript = (BehaviorScript *) behavior;
         }
+        spawnInfo->behaviorScript = behaviorScript;
+        spawnInfo->behaviorArg = level_cmd_normalize_hooked_behavior_arg(
+            (const BehaviorScript *) behaviorScript, behParam);
 
         spawnInfo->next = gAreas[sCurrAreaIndex].objectSpawnInfos;
 
@@ -1052,6 +1211,7 @@ static void level_cmd_place_object_ext_lua_params(void) {
                           : 10;
 
         gAreas[sCurrAreaIndex].objectSpawnInfos = spawnInfo;
+        level_wiiu_log_hooked_spawn("objext", spawnInfo, luaParams);
         area_check_red_coin_or_secret(spawnInfo->behaviorScript, false);
     }
 
@@ -1076,9 +1236,15 @@ static void level_cmd_jump_area_ext(void) {
 static void level_cmd_show_dialog_ext(void) {
     if (sCurrAreaIndex != -1 && !gDjuiInMainMenu) {
         u8 luaParams = CMD_GET(u8, 2);
-
-        get_lua_param(index, u8, SHOW_DIALOG_EXT_LUA_INDEX);
-        get_lua_param(dialogId, s32, SHOW_DIALOG_EXT_LUA_DIALOG);
+        uintptr_t indexParam;
+        uintptr_t dialogIdParam;
+        if (!read_show_dialog_param(&indexParam, SHOW_DIALOG_EXT_LUA_INDEX_OFFSET(0), luaParams, SHOW_DIALOG_EXT_LUA_INDEX) ||
+            !read_show_dialog_param(&dialogIdParam, SHOW_DIALOG_EXT_LUA_DIALOG_OFFSET(0), luaParams, SHOW_DIALOG_EXT_LUA_DIALOG)) {
+            sCurrentCmd = CMD_NEXT;
+            return;
+        }
+        u8 index = (u8) indexParam;
+        s32 dialogId = (s32) dialogIdParam;
 
         if (index < 2) {
             gAreas[sCurrAreaIndex].dialog[index] = dialogId;
