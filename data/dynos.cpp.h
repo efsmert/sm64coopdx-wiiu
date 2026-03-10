@@ -77,6 +77,56 @@ enum {
 // DynOS Binary file struct
 //
 
+#if defined(__BYTE_ORDER__) && (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+#define DYNOS_HOST_BIG_ENDIAN 1
+#else
+#define DYNOS_HOST_BIG_ENDIAN 0
+#endif
+
+static inline u16 DynOS_BSwap16(u16 v) { return __builtin_bswap16(v); }
+static inline u32 DynOS_BSwap32(u32 v) { return __builtin_bswap32(v); }
+static inline u64 DynOS_BSwap64(u64 v) { return __builtin_bswap64(v); }
+
+template <typename T>
+struct DynOS_EndianFix {
+    static inline T Read(T v) { return v; }
+};
+
+#if DYNOS_HOST_BIG_ENDIAN
+template <>
+struct DynOS_EndianFix<u16> { static inline u16 Read(u16 v) { return DynOS_BSwap16(v); } };
+template <>
+struct DynOS_EndianFix<s16> { static inline s16 Read(s16 v) { return (s16)DynOS_BSwap16((u16)v); } };
+template <>
+struct DynOS_EndianFix<u32> { static inline u32 Read(u32 v) { return DynOS_BSwap32(v); } };
+template <>
+struct DynOS_EndianFix<s32> { static inline s32 Read(s32 v) { return (s32)DynOS_BSwap32((u32)v); } };
+template <>
+struct DynOS_EndianFix<u64> { static inline u64 Read(u64 v) { return DynOS_BSwap64(v); } };
+template <>
+struct DynOS_EndianFix<s64> { static inline s64 Read(s64 v) { return (s64)DynOS_BSwap64((u64)v); } };
+template <>
+struct DynOS_EndianFix<f32> {
+    static inline f32 Read(f32 v) {
+        u32 bits = 0;
+        memcpy(&bits, &v, sizeof(bits));
+        bits = DynOS_BSwap32(bits);
+        memcpy(&v, &bits, sizeof(bits));
+        return v;
+    }
+};
+template <>
+struct DynOS_EndianFix<f64> {
+    static inline f64 Read(f64 v) {
+        u64 bits = 0;
+        memcpy(&bits, &v, sizeof(bits));
+        bits = DynOS_BSwap64(bits);
+        memcpy(&v, &bits, sizeof(bits));
+        return v;
+    }
+};
+#endif
+
 class BinFile {
 private:
     void Grow(s32 newSize) {
@@ -143,6 +193,7 @@ public:
             if (aBinFile->mFilename) free((void *) aBinFile->mFilename);
             if (aBinFile->mData) free(aBinFile->mData);
             free(aBinFile);
+            aBinFile = NULL;
         }
     }
 
@@ -154,7 +205,7 @@ public:
             memcpy(&_Item, mData + mOffset, sizeof(T));
             mOffset += sizeof(T);
         }
-        return _Item;
+        return DynOS_EndianFix<T>::Read(_Item);
     }
 
     template <typename T>
@@ -166,6 +217,11 @@ public:
             memcpy(aBuffer, mData + mOffset, aCount * sizeof(T));
             mOffset += aCount * sizeof(T);
         }
+#if DYNOS_HOST_BIG_ENDIAN
+        for (s32 i = 0; i < aCount; i++) {
+            aBuffer[i] = DynOS_EndianFix<T>::Read(aBuffer[i]);
+        }
+#endif
         return aBuffer;
     }
 
@@ -346,7 +402,7 @@ public:
         if (aString) {
             u64 _Length = strlen(aString);
             mCount = MIN(_Length, STRING_SIZE - 1);
-            memcpy(mBuffer, aString, _Length);
+            memcpy(mBuffer, aString, mCount);
         }
         mBuffer[mCount] = 0;
     }
@@ -458,8 +514,23 @@ public:
 
 public:
     void Read(BinFile *aFile) {
-        mCount = aFile->Read<u8>();
-        aFile->Read<char>(mBuffer, mCount);
+        u8 len = aFile->Read<u8>();
+        u8 copyLen = (len >= STRING_SIZE) ? (STRING_SIZE - 1) : len;
+
+        // Copy what fits, then skip remaining bytes to keep stream alignment.
+        aFile->Read<char>(mBuffer, copyLen);
+        if (len > copyLen) {
+            s32 remaining = aFile->Size() - aFile->Offset();
+            s32 toSkip = (s32)(len - copyLen);
+            if (toSkip > remaining) {
+                toSkip = remaining;
+            }
+            if (toSkip > 0) {
+                aFile->Skip(toSkip);
+            }
+        }
+
+        mCount = copyLen;
         mBuffer[mCount] = 0;
     }
 
@@ -942,6 +1013,7 @@ std::vector<std::pair<std::string, GfxData *>> &DynOS_Lvl_GetArray();
 LevelScript* DynOS_Lvl_GetScript(const char* aScriptEntryName);
 void  DynOS_Lvl_Activate(s32 modIndex, const SysPath &aFilePath, const char *aLevelName);
 GfxData* DynOS_Lvl_GetActiveGfx(void);
+bool DynOS_Lvl_IsCustomGeoLayoutPtr(const void *aPtr);
 const char* DynOS_Lvl_GetToken(u32 index);
 DataNode<MovtexQC>* DynOS_Lvl_GetMovtexQuadCollection(s32 index);
 Trajectory* DynOS_Lvl_GetTrajectory(const char* aName);

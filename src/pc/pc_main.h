@@ -9,12 +9,15 @@ extern "C" {
 
 #include "gfx/gfx_opengl.h"
 #include "gfx/gfx_direct3d11.h"
+#include "gfx/gfx_gx2.h"
 
 #include "gfx/gfx_dxgi.h"
 #include "gfx/gfx_sdl.h"
 #include "gfx/gfx_dummy.h"
 
-#if defined(WAPI_SDL1) || defined(WAPI_SDL2)
+#if defined(TARGET_WII_U) || defined(WAPI_GX2)
+# define WAPI gfx_gx2_window
+#elif defined(WAPI_SDL1) || defined(WAPI_SDL2)
 # define WAPI gfx_sdl
 #elif defined(WAPI_DXGI)
 # define WAPI gfx_dxgi
@@ -24,7 +27,10 @@ extern "C" {
 # error No window API!
 #endif
 
-#if defined(RAPI_D3D11)
+#if defined(TARGET_WII_U) || defined(RAPI_GX2)
+# define RAPI gfx_gx2_api
+# define RAPI_NAME "GX2"
+#elif defined(RAPI_D3D11)
 # define RAPI gfx_direct3d11_api
 # define RAPI_NAME "DirectX 11"
 #elif defined(RAPI_GL) || defined(RAPI_GL_LEGACY)

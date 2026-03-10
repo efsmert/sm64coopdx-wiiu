@@ -1,10 +1,97 @@
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 #include "smlua.h"
 #include "pc/mods/mods.h"
 #include "pc/mods/mods_utils.h"
 #include "pc/fs/fmem.h"
 
 #define LOADING_SENTINEL ((void*)-1)
+
+#ifdef TARGET_WII_U
+struct WiiUModuleCacheEntry {
+    struct Mod* mod;
+    char* relativePath;
+    int valueRef;
+    bool loading;
+};
+
+static struct WiiUModuleCacheEntry* sWiiUModuleCache = NULL;
+static u32 sWiiUModuleCacheCount = 0;
+static u32 sWiiUModuleCacheCapacity = 0;
+static lua_State* sWiiUModuleCacheState = NULL;
+
+static void smlua_wiiu_module_cache_clear(lua_State* L, bool unrefValues) {
+    if (sWiiUModuleCache) {
+        for (u32 i = 0; i < sWiiUModuleCacheCount; i++) {
+            struct WiiUModuleCacheEntry* e = &sWiiUModuleCache[i];
+            if (unrefValues && L != NULL && e->valueRef > 0) {
+                luaL_unref(L, LUA_REGISTRYINDEX, e->valueRef);
+            }
+            if (e->relativePath) {
+                free(e->relativePath);
+                e->relativePath = NULL;
+            }
+            e->valueRef = LUA_NOREF;
+            e->loading = false;
+            e->mod = NULL;
+        }
+        free(sWiiUModuleCache);
+        sWiiUModuleCache = NULL;
+    }
+    sWiiUModuleCacheCount = 0;
+    sWiiUModuleCacheCapacity = 0;
+}
+
+static void smlua_wiiu_module_cache_ensure_state(lua_State* L) {
+    if (sWiiUModuleCacheState != L) {
+        // The old lua_State has been replaced; drop stale cache metadata.
+        smlua_wiiu_module_cache_clear(NULL, false);
+        sWiiUModuleCacheState = L;
+    }
+}
+
+static struct WiiUModuleCacheEntry* smlua_wiiu_module_cache_find(struct Mod* mod, const char* relativePath) {
+    for (u32 i = 0; i < sWiiUModuleCacheCount; i++) {
+        struct WiiUModuleCacheEntry* e = &sWiiUModuleCache[i];
+        if (e->mod == mod && e->relativePath != NULL && strcmp(e->relativePath, relativePath) == 0) {
+            return e;
+        }
+    }
+    return NULL;
+}
+
+static struct WiiUModuleCacheEntry* smlua_wiiu_module_cache_get_or_add(struct Mod* mod, const char* relativePath) {
+    struct WiiUModuleCacheEntry* existing = smlua_wiiu_module_cache_find(mod, relativePath);
+    if (existing != NULL) {
+        return existing;
+    }
+
+    if (sWiiUModuleCacheCount >= sWiiUModuleCacheCapacity) {
+        u32 newCapacity = (sWiiUModuleCacheCapacity == 0) ? 64 : (sWiiUModuleCacheCapacity * 2);
+        struct WiiUModuleCacheEntry* grown = realloc(sWiiUModuleCache, sizeof(struct WiiUModuleCacheEntry) * newCapacity);
+        if (grown == NULL) {
+            return NULL;
+        }
+        memset(grown + sWiiUModuleCacheCapacity, 0, sizeof(struct WiiUModuleCacheEntry) * (newCapacity - sWiiUModuleCacheCapacity));
+        sWiiUModuleCache = grown;
+        sWiiUModuleCacheCapacity = newCapacity;
+    }
+
+    struct WiiUModuleCacheEntry* e = &sWiiUModuleCache[sWiiUModuleCacheCount++];
+    size_t len = strlen(relativePath);
+    e->relativePath = calloc(len + 1, 1);
+    if (e->relativePath == NULL) {
+        sWiiUModuleCacheCount--;
+        return NULL;
+    }
+    memcpy(e->relativePath, relativePath, len);
+    e->mod = mod;
+    e->valueRef = LUA_NOREF;
+    e->loading = false;
+    return e;
+}
+#endif
 
 // table to track loaded modules per mod
 void smlua_get_or_create_mod_loaded_table(lua_State* L, struct Mod* mod) {
@@ -21,6 +108,25 @@ void smlua_get_or_create_mod_loaded_table(lua_State* L, struct Mod* mod) {
 }
 
 bool smlua_get_cached_module_result(lua_State* L, struct Mod* mod, struct ModFile* file) {
+#ifdef TARGET_WII_U
+    smlua_wiiu_module_cache_ensure_state(L);
+    struct WiiUModuleCacheEntry* e = smlua_wiiu_module_cache_find(mod, file->relativePath);
+    if (e == NULL) {
+        return false;
+    }
+
+    if (e->loading) {
+        LOG_LUA_LINE("loop or previous error loading module '%s'", file->relativePath);
+        lua_pushnil(L);
+        return true;
+    }
+
+    if (e->valueRef > 0) {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, e->valueRef);
+        return true;
+    }
+    return false;
+#else
     smlua_get_or_create_mod_loaded_table(L, mod);
     lua_getfield(L, -1, file->relativePath);
 
@@ -41,13 +147,28 @@ bool smlua_get_cached_module_result(lua_State* L, struct Mod* mod, struct ModFil
     // cached, remove loaded table and leave value on top
     lua_remove(L, -2);
     return true;
+#endif
 }
 
 void smlua_mark_module_as_loading(lua_State* L, struct Mod* mod, struct ModFile* file) {
+#ifdef TARGET_WII_U
+    smlua_wiiu_module_cache_ensure_state(L);
+    struct WiiUModuleCacheEntry* e = smlua_wiiu_module_cache_get_or_add(mod, file->relativePath);
+    if (e == NULL) {
+        LOG_LUA_LINE("module cache allocation failed for '%s'", file->relativePath);
+        return;
+    }
+    if (e->valueRef > 0) {
+        luaL_unref(L, LUA_REGISTRYINDEX, e->valueRef);
+        e->valueRef = LUA_NOREF;
+    }
+    e->loading = true;
+#else
     smlua_get_or_create_mod_loaded_table(L, mod);
     lua_pushlightuserdata(L, LOADING_SENTINEL);
     lua_setfield(L, -2, file->relativePath);
     lua_pop(L, 1); // pop loaded table
+#endif
 }
  
 void smlua_cache_module_result(lua_State* L, struct Mod* mod, struct ModFile* file, s32 prevTop) {
@@ -58,11 +179,26 @@ void smlua_cache_module_result(lua_State* L, struct Mod* mod, struct ModFile* fi
         lua_pushboolean(L, 1);
     }
 
+#ifdef TARGET_WII_U
+    smlua_wiiu_module_cache_ensure_state(L);
+    struct WiiUModuleCacheEntry* e = smlua_wiiu_module_cache_get_or_add(mod, file->relativePath);
+    if (e == NULL) {
+        LOG_LUA_LINE("module cache allocation failed for '%s'", file->relativePath);
+        return;
+    }
+    if (e->valueRef > 0) {
+        luaL_unref(L, LUA_REGISTRYINDEX, e->valueRef);
+    }
+    lua_pushvalue(L, -1); // duplicate result
+    e->valueRef = luaL_ref(L, LUA_REGISTRYINDEX);
+    e->loading = false;
+#else
     smlua_get_or_create_mod_loaded_table(L, mod);
 
     lua_pushvalue(L, -2); // duplicate result
     lua_setfield(L, -2, file->relativePath); // loaded[file->relativePath] = result
     lua_pop(L, 1); // pop loaded table
+#endif
 }
 
 static struct ModFile* smlua_find_mod_file(const char* moduleName) {
@@ -172,13 +308,21 @@ void smlua_init_require_system(void) {
     lua_State* L = gLuaState;
     if (!L) return;
 
+#ifdef TARGET_WII_U
+    // Reset the Wii U-side module cache whenever a fresh lua_State is created.
+    smlua_wiiu_module_cache_clear(L, false);
+    sWiiUModuleCacheState = L;
+#endif
+
     // initialize the custom require function
     smlua_bind_custom_require(L);
 
     // initialize loaded tables for each mod
+#ifndef TARGET_WII_U
     for (int i = 0; i < gActiveMods.entryCount; i++) {
         struct Mod* mod = gActiveMods.entries[i];
         smlua_get_or_create_mod_loaded_table(L, mod);
         lua_pop(L, 1); // pop loaded table
     }
+#endif
 }

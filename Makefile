@@ -24,6 +24,12 @@ DEVELOPMENT ?= 0
 
 # Build for the N64 (turn this off for ports)
 TARGET_N64 = 0
+# Build for the Wii U
+TARGET_WII_U ?= 0
+# Strip debug symbols from the Wii U ELF before RPX conversion.
+WIIU_STRIP ?= 0
+# Add map/symbol oriented flags for Wii U crash debugging.
+WIIU_CRASH_DEBUG ?= 0
 
 # Build and optimize for Raspberry Pi(s)
 TARGET_RPI ?= 0
@@ -94,6 +100,18 @@ WINDOWS_BUILD ?= 0
 
 WINDOWS_AUTO_BUILDER ?= 0
 
+ifeq ($(TARGET_WII_U),1)
+  WINDOWS_BUILD := 0
+  OSX_BUILD := 0
+  TARGET_RPI := 0
+  TARGET_RK3588 := 0
+  DISCORD_SDK := 0
+  RENDER_API := GX2
+  WINDOW_API := GX2
+  AUDIO_API := SDL2
+  CONTROLLER_API := WIIU
+endif
+
 # Setup extra cflags
 EXTRA_CFLAGS ?=
 EXTRA_CPP_FLAGS ?=
@@ -140,6 +158,15 @@ ifeq ($(HOST_OS),Linux)
     #Rasberry Pi zero, 2, 3, etc
     TARGET_RPI = 1
   endif
+endif
+
+# Keep host auto-detection from enabling desktop-only flags for cross-compiling.
+ifeq ($(TARGET_WII_U),1)
+  WINDOWS_BUILD := 0
+  OSX_BUILD := 0
+  TARGET_RPI := 0
+  TARGET_RK3588 := 0
+  DISCORD_SDK := 0
 endif
 
 # MXE overrides
@@ -486,9 +513,15 @@ _ := $(shell $(PYTHON) $(TOOLS_DIR)/copy_extended_sounds.py)
 
 BUILD_DIR_BASE := build
 # BUILD_DIR is the location where all build artifacts are placed
-BUILD_DIR := $(BUILD_DIR_BASE)/$(VERSION)_pc
+ifeq ($(TARGET_WII_U),1)
+  BUILD_DIR := $(BUILD_DIR_BASE)/$(VERSION)_wiiu
+else
+  BUILD_DIR := $(BUILD_DIR_BASE)/$(VERSION)_pc
+endif
 
-ifeq ($(WINDOWS_BUILD),1)
+ifeq ($(TARGET_WII_U),1)
+  EXE := $(BUILD_DIR)/sm64coopdx.$(VERSION).rpx
+else ifeq ($(WINDOWS_BUILD),1)
 	EXE := $(BUILD_DIR)/sm64coopdx.exe
 else # Linux builds/binary namer
 	ifeq ($(TARGET_RPI),1)
@@ -518,11 +551,19 @@ BIN_DIRS := bin bin/$(VERSION)
 # PC files
 SRC_DIRS += src/pc src/pc/gfx src/pc/audio src/pc/controller src/pc/fs src/pc/fs/packtypes src/pc/mods src/pc/dev src/pc/network src/pc/network/packets src/pc/network/socket src/pc/network/coopnet src/pc/utils src/pc/utils/miniz src/pc/djui src/pc/lua src/pc/lua/utils src/pc/os
 
+ifeq ($(TARGET_WII_U),1)
+  SRC_DIRS += src/pc/gfx/shaders_wiiu
+endif
+
 ifeq ($(DISCORD_SDK),1)
   SRC_DIRS += src/pc/discord
 endif
 
 SRC_DIRS += src/pc/mumble
+
+ifeq ($(TARGET_WII_U),1)
+  SRC_DIRS := $(filter-out src/pc/mumble,$(SRC_DIRS))
+endif
 
 ULTRA_SRC_DIRS := lib/src lib/src/math lib/asm lib/data
 ULTRA_BIN_DIRS := lib/bin
@@ -544,6 +585,24 @@ ULTRA_C_FILES     := $(foreach dir,$(ULTRA_SRC_DIRS),$(wildcard $(dir)/*.c))
 GODDARD_C_FILES   := $(foreach dir,$(GODDARD_SRC_DIRS),$(wildcard $(dir)/*.c))
 ULTRA_S_FILES     := $(foreach dir,$(ULTRA_SRC_DIRS),$(wildcard $(dir)/*.s))
 GENERATED_C_FILES := $(BUILD_DIR)/assets/mario_anim_data.c $(BUILD_DIR)/assets/demo_data.c
+
+ifeq ($(TARGET_WII_U),1)
+  LUA53_SRCDIR      := third_party/lua-5.3.6/src
+  LUA53_C_FILES     := $(filter-out $(LUA53_SRCDIR)/lua.c $(LUA53_SRCDIR)/luac.c,$(wildcard $(LUA53_SRCDIR)/*.c))
+  C_FILES           += $(LUA53_C_FILES)
+  C_FILES           := $(filter-out src/pc/update_checker.c src/pc/lua/utils/smlua_audio_utils.c,$(C_FILES))
+  C_FILES           := $(filter-out src/pc/discord/%.c,$(C_FILES))
+  C_FILES           := $(filter-out src/pc/mumble/%.c,$(C_FILES))
+  C_FILES           := $(filter-out src/pc/mods/mod_fs.c src/pc/gfx/gfx_opengl.c src/pc/gfx/gfx_opengl_legacy.c src/pc/gfx/gfx_sdl1.c src/pc/gfx/gfx_sdl2.c src/pc/network/socket/socket_windows.c,$(C_FILES))
+  CPP_FILES         := $(filter-out src/pc/gfx/gfx_direct3d11.cpp src/pc/gfx/gfx_direct3d_common.cpp src/pc/gfx/gfx_dxgi.cpp,$(CPP_FILES))
+  ifeq ($(COOPNET),1)
+    C_FILES         += $(wildcard third_party/libjuice/src/*.c)
+    CPP_FILES       += $(wildcard third_party/coopnet/common/*.cpp)
+  endif
+else
+  C_FILES           := $(filter-out src/pc/controller/controller_wiiu.c src/pc/wiiu_pthread_shim.c src/pc/pc_diag_wiiu.c src/pc/gfx/gx2_shader_gen.c,$(C_FILES))
+  CPP_FILES         := $(filter-out src/pc/gfx/gfx_gx2.cpp src/pc/gfx/gfx_gx2_window.cpp,$(CPP_FILES))
+endif
 
 #ifeq ($(TARGET_N64),0)
 #  GENERATED_C_FILES += $(addprefix $(BUILD_DIR)/bin/,$(addsuffix _skybox.c,$(notdir $(basename $(wildcard textures/skyboxes/*.png)))))
@@ -573,7 +632,7 @@ SOUND_SAMPLE_DIRS   := $(wildcard sound/samples/*)
 SOUND_SAMPLE_AIFFS  := $(foreach dir,$(SOUND_SAMPLE_DIRS),$(wildcard $(dir)/*.aiff))
 SOUND_SAMPLE_TABLES := $(foreach file,$(SOUND_SAMPLE_AIFFS),$(BUILD_DIR)/$(file:.aiff=.table))
 SOUND_SAMPLE_AIFCS  := $(foreach file,$(SOUND_SAMPLE_AIFFS),$(BUILD_DIR)/$(file:.aiff=.aifc))
-SOUND_SEQUENCE_DIRS := sound/sequences sound/sequences/$(VERSION)
+SOUND_SEQUENCE_DIRS := $(sort $(wildcard sound/sequences sound/sequences/$(VERSION)))
 # all .m64 files in SOUND_SEQUENCE_DIRS, plus all .m64 files that are generated from .s files in SOUND_SEQUENCE_DIRS
 SOUND_SEQUENCE_FILES := \
   $(foreach dir,$(SOUND_SEQUENCE_DIRS),\
@@ -616,6 +675,9 @@ ifeq ($(DISCORD_SDK), 1)
     DISCORD_SDK_LIBS := lib/discordsdk/libdiscord_game_sdk.so
   endif
 endif
+
+RPC_COPY_TARGETS := $(if $(strip $(RPC_LIBS)),$(addprefix $(BUILD_DIR)/,$(RPC_LIBS)))
+DISCORD_SDK_COPY_TARGETS := $(if $(strip $(DISCORD_SDK_LIBS)),$(addprefix $(BUILD_DIR)/,$(DISCORD_SDK_LIBS)))
 
 LANG_DIR := lang
 
@@ -720,7 +782,11 @@ endif
 
 # thank you apple very cool
 ifeq ($(HOST_OS),Darwin)
-  CP := gcp
+  ifneq (,$(call find-command,gcp))
+    CP := gcp
+  else
+    CP := cp
+  endif
 else
   CP := cp
 endif
@@ -741,6 +807,34 @@ endif
 
 AR        := $(CROSS)ar
 
+ifeq ($(TARGET_WII_U),1)
+  ifeq ($(strip $(DEVKITPRO)),)
+    $(error Please set DEVKITPRO in your environment. export DEVKITPRO=<path>/devkitpro)
+  endif
+  ifeq ($(strip $(DEVKITPPC)),)
+    $(error Please set DEVKITPPC in your environment. export DEVKITPPC=<path>/devkitpro/devkitPPC)
+  endif
+
+  include $(DEVKITPPC)/base_tools
+
+  PORTLIBS := $(PORTLIBS_PATH)/wiiu $(PORTLIBS_PATH)/ppc
+  export PATH := $(PORTLIBS_PATH)/wiiu/bin:$(PORTLIBS_PATH)/ppc/bin:$(PATH)
+  WUT_ROOT ?= $(DEVKITPRO)/wut
+  RPXSPECS := -specs=$(WUT_ROOT)/share/wut.specs
+  MACHDEP := -DESPRESSO -mcpu=750 -meabi -mhard-float
+  LIBDIRS := $(PORTLIBS) $(WUT_ROOT)
+  WIIU_INCLUDE := $(foreach dir,$(LIBDIRS),-I$(dir)/include)
+  WIIU_LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
+
+  CC := powerpc-eabi-gcc
+  CXX := powerpc-eabi-g++
+  LD := $(CXX)
+  AR := powerpc-eabi-ar
+  OBJDUMP := powerpc-eabi-objdump
+  OBJCOPY := powerpc-eabi-objcopy
+  CPP := powerpc-eabi-cpp -P
+endif
+
 ifeq ($(TARGET_N64),1)
   TARGET_CFLAGS := -nostdinc -DTARGET_N64 -D_LANGUAGE_C
   CC_CFLAGS := -fno-builtin
@@ -757,6 +851,11 @@ else
   INCLUDE_DIRS += sound lib/lua/include lib/coopnet/include $(EXTRA_INCLUDES)
 endif
 
+ifeq ($(TARGET_WII_U),1)
+  INCLUDE_DIRS := $(filter-out lib/lua/include lib/coopnet/include,$(INCLUDE_DIRS))
+  INCLUDE_DIRS += third_party/lua-5.3.6/src third_party/coopnet/include third_party/coopnet/lib/include third_party/coopnet/common third_party/libjuice/include third_party/libjuice/include/juice third_party/libjuice/src
+endif
+
 # Connfigure backend flags
 
 SDLCONFIG := $(CROSS)sdl2-config
@@ -765,6 +864,11 @@ BACKEND_CFLAGS := -DRAPI_$(RENDER_API)=1 -DWAPI_$(WINDOW_API)=1 -DAAPI_$(AUDIO_A
 # can have multiple controller APIs
 BACKEND_CFLAGS += $(foreach capi,$(CONTROLLER_API),-DCAPI_$(capi)=1)
 BACKEND_LDFLAG0S :=
+
+ifeq ($(TARGET_WII_U),1)
+  BACKEND_CFLAGS := -DTARGET_WII_U -D__WIIU__ -D__WUT__ -D_POSIX_THREADS=1 -D_POSIX_THREAD_PRIORITY_SCHEDULING=1 -D_POSIX_PRIORITY_SCHEDULING=1 -DLUA_32BITS=1 -DMA_NO_RUNTIME_LINKING=1 -DRAPI_GX2=1 -DWAPI_GX2=1 -DAAPI_SDL2=1 -DCAPI_WIIU=1 -DHAVE_SDL2=1
+  BACKEND_LDFLAGS :=
+endif
 
 SDL1_USED := 0
 SDL2_USED := 0
@@ -818,6 +922,7 @@ else ifeq ($(SDL1_USED),1)
 endif
 
 ifneq ($(SDL1_USED)$(SDL2_USED),00)
+  ifneq ($(TARGET_WII_U),1)
   ifeq ($(OSX_BUILD),1)
     # on OSX at least the homebrew version of sdl-config gives include path as `.../include/SDL2` instead of `.../include`
     OSX_PREFIX := $(shell $(SDLCONFIG) --prefix)
@@ -831,6 +936,7 @@ ifneq ($(SDL1_USED)$(SDL2_USED),00)
   else
     BACKEND_LDFLAGS += `$(SDLCONFIG) --libs`
   endif
+  endif
 endif
 
 C_DEFINES += $(foreach d,$(DEFINES),-D$(d))
@@ -839,7 +945,10 @@ DEF_INC_CFLAGS := $(foreach i,$(INCLUDE_DIRS),-I$(i)) $(C_DEFINES)
 # Check code syntax with host compiler
 CC_CHECK := $(CC)
 
-ifeq ($(WINDOWS_BUILD),1)
+ifeq ($(TARGET_WII_U),1)
+  CC_CHECK_CFLAGS := -fsyntax-only -fsigned-char $(BACKEND_CFLAGS) $(DEF_INC_CFLAGS) -Wall -Wextra $(TARGET_CFLAGS) $(WIIU_INCLUDE) $(MACHDEP) -ffunction-sections
+  CFLAGS := $(OPT_FLAGS) $(DEF_INC_CFLAGS) $(BACKEND_CFLAGS) $(TARGET_CFLAGS) $(WIIU_INCLUDE) $(MACHDEP) -ffunction-sections -fno-strict-aliasing -fwrapv -ffast-math
+else ifeq ($(WINDOWS_BUILD),1)
   CC_CHECK_CFLAGS := -fsyntax-only -fsigned-char $(BACKEND_CFLAGS) $(DEF_INC_CFLAGS) -Wall -Wextra $(TARGET_CFLAGS) -DWINSOCK
   CFLAGS := $(OPT_FLAGS) $(DEF_INC_CFLAGS) $(BACKEND_CFLAGS) $(TARGET_CFLAGS) -fno-strict-aliasing -fwrapv -DWINSOCK
 
@@ -880,7 +989,13 @@ ifeq ($(TARGET_N64),1)
   endif
 endif
 
-ifeq ($(WINDOWS_BUILD),1)
+ifeq ($(TARGET_WII_U),1)
+  LDFLAGS := -lm -lz -no-pie -g $(MACHDEP) $(RPXSPECS) $(WIIU_LIBPATHS) $(BACKEND_LDFLAGS) -lSDL2 -lwut
+  ifeq ($(WIIU_CRASH_DEBUG),1)
+    CFLAGS += -O0 -g3 -fno-omit-frame-pointer -fno-optimize-sibling-calls -fno-inline -fno-inline-small-functions -DWIIU_CRASH_DEBUG=1
+    LDFLAGS += -Wl,-Map,$(BUILD_DIR)/sm64coopdx.$(VERSION).wiiu.map
+  endif
+else ifeq ($(WINDOWS_BUILD),1)
   LDFLAGS := $(BITS) -march=$(TARGET_ARCH) -Llib -lpthread $(BACKEND_LDFLAGS) -static -mconsole
   ifeq ($(CROSS),)
     LDFLAGS += -no-pie
@@ -898,7 +1013,9 @@ endif
 
 # used by crash handler and loading screen on linux
 ifeq ($(WINDOWS_BUILD),0)
+  ifneq ($(TARGET_WII_U),1)
   LDFLAGS += -rdynamic -ldl -pthread
+  endif
 endif
 
 # icon
@@ -936,6 +1053,8 @@ LDFLAGS += -lz
 # Update checker library
 ifeq ($(WINDOWS_BUILD),1)
   LDFLAGS += -lwininet
+else ifeq ($(TARGET_WII_U),1)
+  # Curl is not wired for Wii U in this target yet; update checker is omitted there.
 else
   LDFLAGS += -lcurl
 endif
@@ -961,6 +1080,8 @@ else ifeq ($(TARGET_RPI),1)
   endif
 else ifeq ($(TARGET_RK3588),1)
   LDFLAGS += -Llib/lua/linux -l:liblua53-arm64.a
+else ifeq ($(TARGET_WII_U),1)
+  # Wii U builds compile vendored Lua 5.3 sources directly.
 else
   LDFLAGS += -Llib/lua/linux -l:liblua53.a -ldl
 endif
@@ -968,7 +1089,9 @@ endif
 # CoopNet
 COOPNET_LIBS :=
 ifeq ($(COOPNET),1)
-  ifeq ($(WINDOWS_BUILD),1)
+  ifeq ($(TARGET_WII_U),1)
+    # Wii U builds use in-tree coopnet/libjuice sources.
+  else ifeq ($(WINDOWS_BUILD),1)
     ifeq ($(TARGET_BITS), 32)
       LDFLAGS += -Llib/coopnet/win32 -l:libcoopnet.a -l:libjuice.a -lbcrypt -liphlpapi
     else
@@ -997,6 +1120,8 @@ ifeq ($(COOPNET),1)
   endif
 endif
 
+COOPNET_COPY_TARGETS := $(if $(strip $(COOPNET_LIBS)),$(addprefix $(BUILD_DIR)/,$(COOPNET_LIBS)))
+
 # Network/Discord (ugh, needs cleanup)
 ifeq ($(WINDOWS_BUILD),1)
   LDFLAGS += -lws2_32 -lwsock32
@@ -1005,7 +1130,9 @@ ifeq ($(WINDOWS_BUILD),1)
   endif
 else
   ifeq ($(DISCORD_SDK),1)
+    ifneq ($(TARGET_WII_U),1)
     LDFLAGS += -ldiscord_game_sdk -Wl,-rpath . -Wl,-rpath lib/discordsdk
+    endif
   endif
 endif
 
@@ -1023,14 +1150,18 @@ else
   C_DEFINES += -DGIT_HASH="\"$(GIT_HASH)\"" -DCOMPILE_TIME="\"$(COMPILE_TIME)\""
 endif
 
-# Enable ASLR
-CFLAGS += -fPIE
+# Enable ASLR where supported by the platform output format.
+ifneq ($(TARGET_WII_U),1)
+  CFLAGS += -fPIE
+endif
 
 # Prevent a crash with -sopt
 export LANG := C
 
 ifeq ($(OSX_BUILD),0)
-  LDFLAGS += -latomic
+  ifneq ($(TARGET_WII_U),1)
+    LDFLAGS += -latomic
+  endif
 endif
 
 #==============================================================================#
@@ -1067,6 +1198,9 @@ endif
 ifeq ($(COOPNET),1)
   CC_CHECK_CFLAGS += -DCOOPNET
   CFLAGS += -DCOOPNET
+  ifeq ($(TARGET_WII_U),1)
+    CFLAGS += -DJUICE_STATIC -DNO_SERVER
+  endif
 endif
 
 # Check for development option
@@ -1178,6 +1312,20 @@ endef
 #all: $(ROM)
 all: $(EXE)
 
+ifeq ($(TARGET_WII_U),1)
+WUHB := $(BUILD_DIR)/sm64coopdx.$(VERSION).wuhb
+WUHB_NAME ?= SM64 CoopDX Wii U
+WUHB_SHORT_NAME ?= SM64CoopDX
+WUHB_AUTHOR ?= Coop Deluxe Team
+WUHB_STATIC_CONTENT_DIR ?= $(CURDIR)/content
+WUHB_CONTENT_DIR ?= $(BUILD_DIR)/wuhb_content
+WUHB_CONTENT_ARG := --content="$(WUHB_CONTENT_DIR)"
+CEMU_SYNC_DIR ?= $(CURDIR)/sm64coopdx_cemu
+CEMU_SYNC_RPX := $(CEMU_SYNC_DIR)/code/$(notdir $(EXE))
+CEMU_SYNC_CONTENT := $(CEMU_SYNC_DIR)/content
+SYNC_BUILTIN_MODS_SCRIPT ?= $(CURDIR)/tools/sync_builtin_mod_assets.sh
+endif
+
 ifeq ($(WINDOWS_BUILD),1)
 MAPFILE = $(BUILD_DIR)/coop.map
 exemap: $(EXE)
@@ -1208,14 +1356,56 @@ load: $(ROM)
 
 libultra: $(BUILD_DIR)/libultra.a
 
-$(BUILD_DIR)/$(RPC_LIBS):
+ifeq ($(TARGET_WII_U),1)
+$(WUHB): sync-builtin-mod-assets $(EXE)
+	@$(PRINT) "$(GREEN)Packing WUHB:  $(BLUE)$@ $(NO_COL)\n"
+	$(V)wuhbtool $(EXE) $@ \
+		--name="$(WUHB_NAME)" \
+		--short-name="$(WUHB_SHORT_NAME)" \
+		--author="$(WUHB_AUTHOR)" \
+		$(WUHB_CONTENT_ARG)
+
+wuhb: $(WUHB)
+
+cemu-sync: sync-builtin-mod-assets $(EXE)
+	@$(PRINT) "$(GREEN)Syncing RPX for Cemu:  $(BLUE)$(CEMU_SYNC_RPX) $(NO_COL)\n"
+	$(V)mkdir -p $(dir $(CEMU_SYNC_RPX))
+	$(V)cp $(EXE) $(CEMU_SYNC_RPX)
+	@if [ -d "$(WUHB_CONTENT_DIR)" ]; then \
+		$(PRINT) "$(GREEN)Syncing content for Cemu:  $(BLUE)$(CEMU_SYNC_CONTENT) $(NO_COL)\n"; \
+		mkdir -p "$(CEMU_SYNC_CONTENT)"; \
+		rm -rf "$(CEMU_SYNC_CONTENT)"/*; \
+		cp -R "$(WUHB_CONTENT_DIR)"/. "$(CEMU_SYNC_CONTENT)"/; \
+	fi
+
+sync-builtin-mod-assets:
+	@$(PRINT) "$(GREEN)Syncing built-in mod assets:  $(BLUE)$(SYNC_BUILTIN_MODS_SCRIPT) $(NO_COL)\n"
+	$(V)SYNC_CONTENT_DIR="$(WUHB_CONTENT_DIR)" SYNC_STATIC_CONTENT_DIR="$(WUHB_STATIC_CONTENT_DIR)" $(SYNC_BUILTIN_MODS_SCRIPT)
+else
+wuhb:
+	$(error wuhb target is only available with TARGET_WII_U=1)
+
+cemu-sync:
+	$(error cemu-sync target is only available with TARGET_WII_U=1)
+
+sync-builtin-mod-assets:
+	$(error sync-builtin-mod-assets target is only available with TARGET_WII_U=1)
+endif
+
+ifneq ($(strip $(RPC_LIBS)),)
+$(RPC_COPY_TARGETS):
 	@$(CP) -f $(RPC_LIBS) $(BUILD_DIR)
+endif
 
-$(BUILD_DIR)/$(DISCORD_SDK_LIBS):
+ifneq ($(strip $(DISCORD_SDK_LIBS)),)
+$(DISCORD_SDK_COPY_TARGETS):
 	@$(CP) -f $(DISCORD_SDK_LIBS) $(BUILD_DIR)
+endif
 
-$(BUILD_DIR)/$(COOPNET_LIBS):
+ifneq ($(strip $(COOPNET_LIBS)),)
+$(COOPNET_COPY_TARGETS):
 	@$(CP) -f $(COOPNET_LIBS) $(BUILD_DIR)
+endif
 
 $(BUILD_DIR)/$(LANG_DIR):
 	@$(CP) -f -r $(LANG_DIR) $(BUILD_DIR)
@@ -1288,20 +1478,24 @@ TEXTURE_ENCODING := u8
 # Convert PNGs to RGBA32, RGBA16, IA16, IA8, IA4, IA1, I8, I4 binary files
 $(BUILD_DIR)/%: %.png
 	$(call print,Converting:,$<,$@)
-	$(V)$(N64GRAPHICS) -s raw -i $@ -g $< -f $(lastword $(subst ., ,$@))
+	$(V)mkdir -p $(dir $@)
+	$(V)$(N64GRAPHICS) -s raw -i $@ -g $< -f $(lastword $(subst ., ,$(basename $<)))
 
 $(BUILD_DIR)/%.inc.c: %.png
 	$(call print,Converting:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(N64GRAPHICS) -s $(TEXTURE_ENCODING) -i $@ -g $< -f $(lastword ,$(subst ., ,$(basename $<)))
 
 # Color Index CI8
 $(BUILD_DIR)/%.ci8: %.ci8.png
 	$(call print,Converting:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(N64GRAPHICS_CI) -i $@ -g $< -f ci8
 
 # Color Index CI4
 $(BUILD_DIR)/%.ci4: %.ci4.png
 	$(call print,Converting:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(N64GRAPHICS_CI) -i $@ -g $< -f ci4
 
 #==============================================================================#
@@ -1349,11 +1543,13 @@ endif
 
 $(BUILD_DIR)/%.table: %.aiff
 	$(call print,Extracting codebook:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(AIFF_EXTRACT_CODEBOOK) $< >$@
 	$(call print,Piping:,$<,$@.inc.c)
 
 $(BUILD_DIR)/%.aifc: $(BUILD_DIR)/%.table %.aiff
 	$(call print,Encoding VADPCM:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(VADPCM_ENC) -c $^ $@
 
 $(ENDIAN_BITWIDTH): $(TOOLS_DIR)/determine-endian-bitwidth.c
@@ -1364,6 +1560,93 @@ $(ENDIAN_BITWIDTH): $(TOOLS_DIR)/determine-endian-bitwidth.c
 	@$(RM) $@.dummy1
 	@$(RM) $@.dummy2
 
+ifeq ($(TARGET_WII_U),1)
+# Default to donor Wii U sound blobs for stability while native CoopDX sound
+# assembly is iterated behind WIIU_USE_DONOR_SOUND=0.
+WIIU_USE_DONOR_SOUND ?= 1
+ifeq ($(WIIU_USE_DONOR_SOUND),1)
+WIIU_DONOR_SOUND_DIR ?= ../sm64wiiu/build/$(VERSION)_wiiu/sound
+
+$(SOUND_BIN_DIR)/sound_data.ctl: $(WIIU_DONOR_SOUND_DIR)/sound_data.ctl
+	@$(PRINT) "$(GREEN)Copying donor Wii U sound data:  $(BLUE)$@ $(NO_COL)\n"
+	$(V)cp "$<" "$@"
+
+$(SOUND_BIN_DIR)/sound_data.tbl: $(WIIU_DONOR_SOUND_DIR)/sound_data.tbl
+	@$(PRINT) "$(GREEN)Copying donor Wii U sound data:  $(BLUE)$@ $(NO_COL)\n"
+	$(V)cp "$<" "$@"
+
+$(SOUND_BIN_DIR)/bank_sets: $(WIIU_DONOR_SOUND_DIR)/bank_sets
+	@$(PRINT) "$(GREEN)Copying donor Wii U sound data:  $(BLUE)$@ $(NO_COL)\n"
+	$(V)cp "$<" "$@"
+
+$(SOUND_BIN_DIR)/sequences.bin: $(WIIU_DONOR_SOUND_DIR)/sequences.bin
+	@$(PRINT) "$(GREEN)Copying donor Wii U sound data:  $(BLUE)$@ $(NO_COL)\n"
+	$(V)cp "$<" "$@"
+
+$(SOUND_BIN_DIR)/ctl_header: $(SOUND_BIN_DIR)/sound_data.ctl
+	@true
+
+$(SOUND_BIN_DIR)/tbl_header: $(SOUND_BIN_DIR)/sound_data.ctl
+	@true
+
+$(SOUND_BIN_DIR)/sequences_header: $(SOUND_BIN_DIR)/sequences.bin
+	@true
+else
+# Build endian-correct Wii U sound blobs by assembling CoopDX sound banks
+# against a merged sample set:
+# - donor prebuilt base AIFCs (sfx_1, sfx_4, ...)
+# - CoopDX-built custom AIFCs (sfx_custom_*)
+WIIU_DONOR_AIFC_DIR ?= ../sm64wiiu/build/$(VERSION)_wiiu/sound/samples
+WIIU_DONOR_SOUND_DIR ?= ../sm64wiiu/build/$(VERSION)_wiiu/sound
+WIIU_MERGED_SAMPLES_STAMP := $(SOUND_BIN_DIR)/samples/.wiiu_donor_synced
+
+$(WIIU_MERGED_SAMPLES_STAMP): $(SOUND_SAMPLE_AIFCS)
+	@if [ ! -d "$(WIIU_DONOR_AIFC_DIR)" ]; then \
+		echo "Missing donor Wii U sample cache: $(WIIU_DONOR_AIFC_DIR)"; \
+		echo "Build donor once (make -C sm64wiiu TARGET_WII_U=1) or set WIIU_DONOR_AIFC_DIR."; \
+		exit 1; \
+	fi
+	@$(PRINT) "$(GREEN)Syncing donor Wii U sample banks:  $(BLUE)$(WIIU_DONOR_AIFC_DIR) -> $(SOUND_BIN_DIR)/samples $(NO_COL)\n"
+	$(V)mkdir -p "$(SOUND_BIN_DIR)/samples"
+	$(V)rsync -a "$(WIIU_DONOR_AIFC_DIR)/" "$(SOUND_BIN_DIR)/samples/"
+	$(V)mkdir -p "$(SOUND_BIN_DIR)/samples/extended"
+	$(V)for d in instruments bowser_organ course_start piranha_music_box; do \
+		if [ -d "$(SOUND_BIN_DIR)/samples/$$d" ]; then \
+			for f in "$(SOUND_BIN_DIR)/samples/$$d"/*.aifc; do \
+				[ -e "$$f" ] || continue; \
+				base="$$(basename "$$f")"; \
+				dst="$(SOUND_BIN_DIR)/samples/extended/$$base"; \
+				[ -e "$$dst" ] || cp "$$f" "$$dst"; \
+			done; \
+		fi; \
+	done
+	$(V)touch "$@"
+
+$(SOUND_BIN_DIR)/sound_data.ctl: sound/sound_banks/ $(SOUND_BANK_FILES) $(WIIU_MERGED_SAMPLES_STAMP) $(ENDIAN_BITWIDTH)
+	@$(PRINT) "$(GREEN)Generating:  $(BLUE)$@ $(NO_COL)\n"
+	$(V)$(PYTHON) $(TOOLS_DIR)/assemble_sound.py $(SOUND_BIN_DIR)/samples/ sound/sound_banks/ $(SOUND_BIN_DIR)/sound_data.ctl $(SOUND_BIN_DIR)/ctl_header $(SOUND_BIN_DIR)/sound_data.tbl $(SOUND_BIN_DIR)/tbl_header $(C_DEFINES) $$(cat $(ENDIAN_BITWIDTH))
+
+$(SOUND_BIN_DIR)/sound_data.tbl: $(SOUND_BIN_DIR)/sound_data.ctl
+	@true
+
+$(SOUND_BIN_DIR)/ctl_header: $(SOUND_BIN_DIR)/sound_data.ctl
+	@true
+
+$(SOUND_BIN_DIR)/tbl_header: $(SOUND_BIN_DIR)/sound_data.ctl
+	@true
+
+$(SOUND_BIN_DIR)/sequences.bin: $(WIIU_DONOR_SOUND_DIR)/sequences.bin
+	@$(PRINT) "$(GREEN)Copying donor Wii U sequences:  $(BLUE)$@ $(NO_COL)\n"
+	$(V)cp "$<" "$@"
+
+$(SOUND_BIN_DIR)/bank_sets: $(WIIU_DONOR_SOUND_DIR)/bank_sets
+	@$(PRINT) "$(GREEN)Copying donor Wii U bank sets:  $(BLUE)$@ $(NO_COL)\n"
+	$(V)cp "$<" "$@"
+
+$(SOUND_BIN_DIR)/sequences_header: $(SOUND_BIN_DIR)/sequences.bin
+	@true
+endif
+else
 $(SOUND_BIN_DIR)/sound_data.tbl: sound/sound_data_compressed.tbl
 	@$(PRINT) "$(GREEN)Decompressing:  $(BLUE)$@ $(NO_COL)\n"
 	$(V)$(PYTHON) $(TOOLS_DIR)/decompress.py sound/sound_data_compressed.tbl $(SOUND_BIN_DIR)/sound_data.tbl
@@ -1388,6 +1671,7 @@ $(SOUND_BIN_DIR)/sequences.bin:
 
 $(SOUND_BIN_DIR)/sequences_header: $(SOUND_BIN_DIR)/sequences.bin
 	@true
+endif
 
 $(SOUND_BIN_DIR)/%.m64: $(SOUND_BIN_DIR)/%.o
 	$(call print,Converting to M64:,$<,$@)
@@ -1401,30 +1685,36 @@ $(SOUND_BIN_DIR)/%.m64: $(SOUND_BIN_DIR)/%.o
 # Convert binary file to a comma-separated list of byte values for inclusion in C code
 $(BUILD_DIR)/%.inc.c: $(BUILD_DIR)/%
 	$(call print,Piping:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)hexdump -v -e '1/1 "0x%X,"' $< > $@
 	$(V)echo >> $@
 
 # Generate animation data
 $(BUILD_DIR)/assets/mario_anim_data.c: $(wildcard assets/anims/*.inc.c)
 	@$(PRINT) "$(GREEN)Generating animation data $(NO_COL)\n"
+	$(V)mkdir -p $(dir $@)
 	$(V)$(PYTHON) $(TOOLS_DIR)/mario_anims_converter.py > $@
 
 # Generate demo input data
 $(BUILD_DIR)/assets/demo_data.c: assets/demo_data.json $(wildcard assets/demos/*.bin)
 	@$(PRINT) "$(GREEN)Generating demo data $(NO_COL)\n"
+	$(V)mkdir -p $(dir $@)
 	$(V)$(PYTHON) $(TOOLS_DIR)/demo_data_converter.py assets/demo_data.json $(DEF_INC_CFLAGS) > $@
 
 # Encode in-game text strings
 $(BUILD_DIR)/text/%/define_courses.inc.c: text/define_courses.inc.c text/%/courses.h
 	@$(PRINT) "$(GREEN)Preprocessing: $(BLUE)$@ $(NO_COL)\n"
+	$(V)mkdir -p $(dir $@)
 	$(V)$(CPP) $(PROF_FLAGS) $(CPPFLAGS) $< -o - -I text/$*/ | $(TEXTCONV) charmap.txt - $@
 $(BUILD_DIR)/text/%/define_text.inc.c: text/define_text.inc.c text/%/courses.h text/%/dialogs.h
 	@$(PRINT) "$(GREEN)Preprocessing: $(BLUE)$@ $(NO_COL)\n"
+	$(V)mkdir -p $(dir $@)
 	$(V)$(CPP) $(PROF_FLAGS) $(CPPFLAGS) $< -o - -I text/$*/ | $(TEXTCONV) charmap.txt - $@
 
 # Level headers
 $(BUILD_DIR)/include/level_headers.h: levels/level_headers.h.in
 	$(call print,Preprocessing level headers:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(CPP) $(PROF_FLAGS) $(CPPFLAGS) -I . levels/level_headers.h.in | $(PYTHON) $(TOOLS_DIR)/output_level_headers.py > $(BUILD_DIR)/include/level_headers.h
 
 # Run asm_processor on files that have NON_MATCHING code
@@ -1438,7 +1728,6 @@ $(GLOBAL_ASM_DEP).$(NON_MATCHING):
 	@$(RM) $(GLOBAL_ASM_DEP).*
 	$(V)touch $@
 
-
 #==============================================================================#
 # Compilation Recipes                                                          #
 #==============================================================================#
@@ -1446,18 +1735,39 @@ $(GLOBAL_ASM_DEP).$(NON_MATCHING):
 # Compile C++ code
 $(BUILD_DIR)/%.o: %.cpp
 	$(call print,Compiling:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(CXX) $(PROF_FLAGS) -fsyntax-only $(EXTRA_CPP_FLAGS) $(EXTRA_CPP_INCLUDES) $(CFLAGS) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d $<
 	$(V)$(CXX) $(PROF_FLAGS) -c $(EXTRA_CPP_FLAGS) $(EXTRA_CPP_INCLUDES) $(CFLAGS) -o $@ $<
 
 # Compile C code
 $(BUILD_DIR)/%.o: %.c
 	$(call print,Compiling:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(CC_CHECK) $(PROF_FLAGS) $(CC_CHECK_CFLAGS) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d $<
 	$(V)$(CC) $(PROF_FLAGS) -c $(CFLAGS) -o $@ $<
 $(BUILD_DIR)/%.o: $(BUILD_DIR)/%.c
 	$(call print,Compiling:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(CC_CHECK) $(PROF_FLAGS) $(CC_CHECK_CFLAGS) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d $<
 	$(V)$(CC) $(PROF_FLAGS) -c $(CFLAGS) -o $@ $<
+
+ifeq ($(TARGET_WII_U),1)
+  # Lua core relies on strict IEEE float semantics for hash/table internals.
+  # Global Wii U fast-math causes runtime corruption in luaH_resize/luaV_execute.
+  # Keep Lua at low optimization for runtime stability on Cemu/hardware while
+  # Co-op DX API coverage is still being brought up.
+  $(BUILD_DIR)/third_party/lua-5.3.6/src/%.o: CFLAGS += -fno-fast-math -O0 -DLUA_C89_NUMBERS
+
+  # Collision code is extremely sensitive to FP/stack codegen on Wii U/Cemu.
+  # Keep this translation unit on strict math to avoid fast-math assumptions and
+  # reduce emulator crash risk in large DynOS custom stages.
+  $(BUILD_DIR)/src/engine/surface_collision.o: CFLAGS += -fno-fast-math -fno-unsafe-math-optimizations -fno-finite-math-only
+
+  # CoopNet common uses modern C++ (filesystem and chrono helpers).
+  $(BUILD_DIR)/third_party/coopnet/common/%.o: CFLAGS += -std=gnu++17 -Wno-error -Wno-unused-function
+  # libjuice is third-party network code; keep warnings non-fatal on Wii U.
+  $(BUILD_DIR)/third_party/libjuice/src/%.o: CFLAGS += -Wno-error
+endif
 
 # Alternate compiler flags needed for matching
 ifeq ($(COMPILER),ido)
@@ -1532,6 +1842,7 @@ $(BUILD_DIR)/$(LD_SCRIPT): $(LD_SCRIPT)
 # Assemble assembly code
 $(BUILD_DIR)/%.o: %.s
 	$(call print,Assembling:,$<,$@)
+	$(V)mkdir -p $(dir $@)
 	$(V)$(AS) $(ASFLAGS) -MD $(BUILD_DIR)/$*.d -o $@ $<
 
 ifeq ($(TARGET_N64),1)
@@ -1565,12 +1876,22 @@ ifeq ($(TARGET_N64),1)
   $(BUILD_DIR)/$(TARGET).objdump: $(ELF)
 	$(OBJDUMP) -D $< > $@
 else
-  $(EXE): $(O_FILES) $(MIO0_FILES:.mio0=.o) $(ULTRA_O_FILES) $(GODDARD_O_FILES) $(BUILD_DIR)/$(RPC_LIBS) $(BUILD_DIR)/$(DISCORD_SDK_LIBS) $(BUILD_DIR)/$(COOPNET_LIBS) $(BUILD_DIR)/$(LANG_DIR) $(BUILD_DIR)/$(MOD_DIR) $(BUILD_DIR)/$(PALETTES_DIR)
+  $(EXE): $(O_FILES) $(MIO0_FILES:.mio0=.o) $(ULTRA_O_FILES) $(GODDARD_O_FILES) $(RPC_COPY_TARGETS) $(DISCORD_SDK_COPY_TARGETS) $(COOPNET_COPY_TARGETS) $(BUILD_DIR)/$(LANG_DIR) $(BUILD_DIR)/$(MOD_DIR) $(BUILD_DIR)/$(PALETTES_DIR)
 	@$(PRINT) "$(GREEN)Linking executable: $(BLUE)$@ $(NO_COL)\n"
-	$(V)$(LD) $(PROF_FLAGS) -L $(BUILD_DIR) -o $@ $(O_FILES) $(ULTRA_O_FILES) $(GODDARD_O_FILES) $(LDFLAGS)
+	$(V)$(LD) $(PROF_FLAGS) -L $(BUILD_DIR) -o $(ELF) $(O_FILES) $(ULTRA_O_FILES) $(GODDARD_O_FILES) $(LDFLAGS)
+ifeq ($(TARGET_WII_U),1)
+ifeq ($(WIIU_STRIP),1)
+	$(V)$(OBJCOPY) --strip-all $(ELF) $(ELF:.elf=.stripped.elf)
+	$(V)elf2rpl $(ELF:.elf=.stripped.elf) $@
+else
+	$(V)elf2rpl $(ELF) $@
+endif
+else
+	$(V)cp $(ELF) $@
+endif
 endif
 
-.PHONY: all clean distclean default diff test load libultra res
+.PHONY: all clean distclean default diff test load libultra res wuhb cemu-sync sync-builtin-mod-assets
 .PRECIOUS: $(BUILD_DIR)/bin/%.elf $(SOUND_BIN_DIR)/%.ctl $(SOUND_BIN_DIR)/%.tbl $(SOUND_SAMPLE_TABLES) $(SOUND_BIN_DIR)/%.s $(BUILD_DIR)/%
 # with no prerequisites, .SECONDARY causes no intermediate target to be removed
 .SECONDARY:

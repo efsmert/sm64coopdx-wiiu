@@ -27,6 +27,9 @@
 #include "bettercamera.h"
 #include "hud.h"
 #include "pc/controller/controller_mouse.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#endif
 
 // FIXME: I'm not sure all of these variables belong in this file, but I don't
 // know of a good way to split them
@@ -579,27 +582,69 @@ static struct LevelCommand *levelCommandAddr;
 // main game loop thread. runs forever as long as the game
 // continues.
 void thread5_game_loop(UNUSED void *arg) {
-
+#ifdef TARGET_WII_U
+    OSReport("thread5: begin\n");
+#endif
     setup_game_memory();
+#ifdef TARGET_WII_U
+    OSReport("thread5: after setup_game_memory\n");
+#endif
     init_rumble_pak_scheduler_queue();
+#ifdef TARGET_WII_U
+    OSReport("thread5: after init_rumble_pak_scheduler_queue\n");
+#endif
     init_controllers();
+#ifdef TARGET_WII_U
+    OSReport("thread5: after init_controllers bits=%u p1_port=%d\n",
+             (unsigned)gControllerBits,
+             (int)gPlayer1Controller->port);
+#endif
     create_thread_6();
+#ifdef TARGET_WII_U
+    OSReport("thread5: after create_thread_6\n");
+#endif
     save_file_load_all(FALSE);
+#ifdef TARGET_WII_U
+    OSReport("thread5: after save_file_load_all\n");
+#endif
 
     set_vblank_handler(2, &gGameVblankHandler, &gGameVblankQueue, (OSMesg) 1);
+#ifdef TARGET_WII_U
+    OSReport("thread5: after set_vblank_handler\n");
+#endif
 
     // point levelCommandAddr to the entry point into the level script data.
     levelCommandAddr = segmented_to_virtual(level_script_entry);
+#ifdef TARGET_WII_U
+    OSReport("thread5: after level_script_entry\n");
+#endif
 
     play_music(SEQ_PLAYER_SFX, SEQUENCE_ARGS(0, SEQ_SOUND_PLAYER), 0);
+#ifdef TARGET_WII_U
+    OSReport("thread5: after play_music\n");
+#endif
     set_sound_mode(save_file_get_sound_mode());
+#ifdef TARGET_WII_U
+    OSReport("thread5: after set_sound_mode\n");
+#endif
 
     thread6_rumble_loop(NULL);
+#ifdef TARGET_WII_U
+    OSReport("thread5: after thread6_rumble_loop\n");
+#endif
 
     gGlobalTimer++;
 }
 
 void game_loop_one_iteration(void) {
+#ifdef TARGET_WII_U
+    static bool sLoggedFirstGameLoopIteration = false;
+    const bool traceFirstIteration = !sLoggedFirstGameLoopIteration;
+    if (!sLoggedFirstGameLoopIteration) {
+        sLoggedFirstGameLoopIteration = true;
+        OSReport("thread5: first game_loop_one_iteration\n");
+    }
+#endif
     profiler_log_thread5_time(THREAD5_START);
 
     // if any controllers are plugged in, start read the data for when
@@ -609,11 +654,33 @@ void game_loop_one_iteration(void) {
         osContStartReadData(&gSIEventMesgQueue);
     }
 
+#ifdef TARGET_WII_U
+    if (traceFirstIteration) { OSReport("thread5: frame audio_game_loop_tick begin\n"); }
+#endif
     audio_game_loop_tick();
+#ifdef TARGET_WII_U
+    if (traceFirstIteration) { OSReport("thread5: frame audio_game_loop_tick end\n"); }
+    if (traceFirstIteration) { OSReport("thread5: frame config_gfx_pool begin\n"); }
+#endif
     config_gfx_pool();
+#ifdef TARGET_WII_U
+    if (traceFirstIteration) { OSReport("thread5: frame config_gfx_pool end\n"); }
+    if (traceFirstIteration) { OSReport("thread5: frame read_controller_inputs begin\n"); }
+#endif
     read_controller_inputs();
+#ifdef TARGET_WII_U
+    if (traceFirstIteration) { OSReport("thread5: frame read_controller_inputs end\n"); }
+    if (traceFirstIteration) { OSReport("thread5: frame level_script_execute begin\n"); }
+#endif
     levelCommandAddr = level_script_execute(levelCommandAddr);
+#ifdef TARGET_WII_U
+    if (traceFirstIteration) { OSReport("thread5: frame level_script_execute end\n"); }
+    if (traceFirstIteration) { OSReport("thread5: frame display_and_vsync begin\n"); }
+#endif
     display_and_vsync();
+#ifdef TARGET_WII_U
+    if (traceFirstIteration) { OSReport("thread5: frame display_and_vsync end\n"); }
+#endif
 
     // when debug info is enabled, print the "BUF %d" information.
     if (gShowDebugText) {

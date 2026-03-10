@@ -43,6 +43,7 @@ static void djui_lobby_entry_update_style(struct DjuiBase* base) {
 static void djui_lobby_entry_destroy(struct DjuiBase* base) {
     struct DjuiLobbyEntry* lobbyEntry = (struct DjuiLobbyEntry*)base;
     if (lobbyEntry->description) { free((char*)lobbyEntry->description); }
+    if (lobbyEntry->host) { free((char*)lobbyEntry->host); }
     free(lobbyEntry);
 }
 
@@ -51,6 +52,10 @@ struct DjuiLobbyEntry* djui_lobby_entry_create(struct DjuiBase* parent, char* ho
     struct DjuiBase* base = &lobbyEntry->base;
 
     lobbyEntry->description = strdup(description);
+    lobbyEntry->host = strdup(host);
+    lobbyEntry->rowIndex = -1;
+    lobbyEntry->lobbyId = 0;
+    lobbyEntry->disabled = disabled;
 
     djui_base_init(parent, base, djui_rect_render, djui_lobby_entry_destroy);
     djui_base_set_size_type(&lobbyEntry->base, DJUI_SVT_RELATIVE, DJUI_SVT_ABSOLUTE);

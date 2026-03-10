@@ -5,9 +5,26 @@
 
 static u8 sAllowCCPrint = 1;
 
+static inline u8 gfx_cm_get_component(const struct CombineMode* cm, int index) {
+    if (cm == NULL || index < 0 || index >= 16) {
+        return 0;
+    }
+
+    const u32 words[4] = {
+        cm->rgb1,
+        cm->alpha1,
+        cm->rgb2,
+        cm->alpha2,
+    };
+
+    const u32 word = words[index >> 2];
+    const u32 shift = (u32)(index & 3) * 8U;
+    return (u8)((word >> shift) & 0xFFU);
+}
+
 bool gfx_cm_uses_second_texture(struct CombineMode* cm) {
     for (int i = 0; i < 16; i++) {
-        u8 v = cm->all_values[i];
+        u8 v = gfx_cm_get_component(cm, i);
         switch (v) {
             case CC_TEXEL1:
             case CC_TEXEL1A:
@@ -21,9 +38,18 @@ void gfx_cc_get_features(struct ColorCombiner* cc, struct CCFeatures* ccf) {
     // reset ccf
     memset(ccf, 0, sizeof(struct CCFeatures));
 
-    int cmd_length = cc->cm.use_2cycle ? 16 : 8;
+    ccf->opt_alpha = gfx_cm_has(&cc->cm, CM_FLAG_USE_ALPHA);
+    ccf->opt_fog = gfx_cm_has(&cc->cm, CM_FLAG_USE_FOG);
+    ccf->opt_texture_edge = gfx_cm_has(&cc->cm, CM_FLAG_TEXTURE_EDGE);
+    ccf->opt_light_map = gfx_cm_has(&cc->cm, CM_FLAG_LIGHT_MAP);
+    ccf->opt_2cycle = gfx_cm_has(&cc->cm, CM_FLAG_USE_2CYCLE);
+
+    u8 shader_cmds[SHADER_CMD_LENGTH];
+    memcpy(shader_cmds, cc->shader_commands, sizeof(shader_cmds));
+    memcpy(ccf->shader_cmds, shader_cmds, sizeof(shader_cmds));
+    int cmd_length = ccf->opt_2cycle ? 16 : 8;
     for (int i = 0; i < cmd_length; i++) {
-        u8 c = cc->shader_commands[i];
+        u8 c = shader_cmds[i];
         if (c >= SHADER_INPUT_1 && c <= SHADER_INPUT_8) {
             if (c > ccf->num_inputs) { ccf->num_inputs = c; }
         }
@@ -31,10 +57,16 @@ void gfx_cc_get_features(struct ColorCombiner* cc, struct CCFeatures* ccf) {
         ccf->used_textures[1] = ccf->used_textures[1] || c == SHADER_TEXEL1 || c == SHADER_TEXEL1A;
         ccf->do_noise = ccf->do_noise || c == SHADER_NOISE;
     }
+    ccf->opt_noise = ccf->do_noise;
+
+    for (int j = 0; j < 4; j++) {
+        ccf->c[0][j] = shader_cmds[j];
+        ccf->c[1][j] = shader_cmds[4 + j];
+    }
 
     // figure out optimizations
     for (int i = 0; i < 16 / 4; i++) {
-        u8* c = &cc->shader_commands[i * 4];
+        u8* c = &shader_cmds[i * 4];
         ccf->do_single[i]   = (c[2] == 0);
         ccf->do_multiply[i] = (c[1] == 0 && c[3] == 0);
         ccf->do_mix[i]      = (c[1] == c[3]);
@@ -44,7 +76,7 @@ void gfx_cc_get_features(struct ColorCombiner* cc, struct CCFeatures* ccf) {
     ccf->color_alpha_same[1] = 1;
 
     for (int i = 0; i < 2; i++) {
-        u8* cmd = &cc->shader_commands[i * 8];
+        u8* cmd = &shader_cmds[i * 8];
         for (int j = 0; j < 4; j++) {
             if (cmd[j] != cmd[j + 4]) {
                 ccf->color_alpha_same[i] = 0;

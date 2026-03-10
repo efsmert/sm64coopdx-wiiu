@@ -58,12 +58,23 @@
 // DJUI //
 //////////
 
+#if defined(F3DEX_GBI_2) || defined(F3DEX_GBI_2E) || defined(F3DZEX_GBI_2)
+// F3DEX2 reserves 0xE0/0xE1 and 0xDD, so keep DJUI extension commands
+// in free immediate ranges to avoid opcode collisions in this build.
+#define G_TEXCLIP_DJUI     0x14
+#define G_TEXOVERRIDE_DJUI 0x15
+#define G_VTX_EXT          0x11
+#define G_TRI2_EXT         0x12
+#define G_TEXADDR_DJUI     0x13
+#define G_EXECUTE_DJUI     0x16
+#else
 #define G_TEXCLIP_DJUI     0xe1
 #define G_TEXOVERRIDE_DJUI 0xe0
 #define G_VTX_EXT          0x11
 #define G_TRI2_EXT         0x12
 #define G_TEXADDR_DJUI     0x13
 #define G_EXECUTE_DJUI     0xdd
+#endif
 
 #define G_MTX_INVERSE_CAMERA_EXT   0x08
 

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 enum {
     CC_0,
@@ -44,18 +45,34 @@ enum {
     SHADER_NOISE,
 };
 
+#define SHADER_CMD_LENGTH 16
 #define SHADER_OPT_ALPHA (1 << 24)
 #define SHADER_OPT_FOG (1 << 25)
 #define SHADER_OPT_TEXTURE_EDGE (1 << 26)
 #define SHADER_OPT_NOISE (1 << 27)
 
+#define CM_FLAG_USE_ALPHA    (1u << 0)
+#define CM_FLAG_USE_FOG      (1u << 1)
+#define CM_FLAG_TEXTURE_EDGE (1u << 2)
+#define CM_FLAG_USE_DITHER   (1u << 3)
+#define CM_FLAG_USE_2CYCLE   (1u << 4)
+#define CM_FLAG_LIGHT_MAP    (1u << 5)
+
 struct CCFeatures {
     bool used_textures[2];
     int num_inputs;
+    uint8_t shader_cmds[SHADER_CMD_LENGTH];
+    uint8_t c[2][4];
     bool do_single[4];
     bool do_multiply[4];
     bool do_mix[4];
     bool color_alpha_same[2];
+    bool opt_alpha;
+    bool opt_fog;
+    bool opt_texture_edge;
+    bool opt_noise;
+    bool opt_light_map;
+    bool opt_2cycle;
     bool do_noise;
 };
 
@@ -70,22 +87,26 @@ struct CombineMode {
         };
         uint8_t all_values[16];
     };
-    union {
-        struct {
-            uint8_t use_alpha    : 1;
-            uint8_t use_fog      : 1;
-            uint8_t texture_edge : 1;
-            uint8_t use_dither   : 1;
-            uint8_t use_2cycle   : 1;
-            uint8_t light_map    : 1;
-        };
-        uint32_t flags;
-    };
+    uint32_t flags;
     uint64_t hash;
 };
 #pragma pack()
 
-#define SHADER_CMD_LENGTH 16
+static inline bool gfx_cm_has(const struct CombineMode *cm, uint32_t mask) {
+    return cm != NULL && (cm->flags & mask) != 0;
+}
+
+static inline void gfx_cm_set(struct CombineMode *cm, uint32_t mask, bool enabled) {
+    if (cm == NULL) {
+        return;
+    }
+    if (enabled) {
+        cm->flags |= mask;
+    } else {
+        cm->flags &= ~mask;
+    }
+}
+
 #define CC_MAX_SHADERS 64
 
 struct ColorCombiner {

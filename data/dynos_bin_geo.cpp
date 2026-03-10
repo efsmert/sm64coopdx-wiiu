@@ -533,12 +533,22 @@ void DynOS_Geo_Load(BinFile *aFile, GfxData *aGfxData) {
     _Node->mSize = aFile->Read<u32>();
     _Node->mData = New<GeoLayout>(_Node->mSize);
     for (u32 i = 0; i != _Node->mSize; ++i) {
-        u32 _Value = aFile->Read<u32>();
-        void *_Ptr = DynOS_Pointer_Load(aFile, aGfxData, _Value, FUNCTION_GEO, &_Node->mFlags);
+        // Keep raw command-word bytes in memory for geo command decoding.
+        // Use a swapped numeric copy only for DynOS pointer token decoding.
+        u32 _RawValue = 0;
+        aFile->Read<u8>((u8 *) &_RawValue, sizeof(_RawValue));
+        u32 _TokenValue = DynOS_EndianFix<u32>::Read(_RawValue);
+
+        void *_Ptr = DynOS_Pointer_Load(aFile, aGfxData, _TokenValue, FUNCTION_GEO, &_Node->mFlags);
         if (_Ptr) {
             _Node->mData[i] = (uintptr_t) _Ptr;
+        } else if (_TokenValue == FUNCTION_CODE || _TokenValue == POINTER_CODE || _TokenValue == LUA_VAR_CODE) {
+            aGfxData->mErrorCount++;
+            PrintError("ERROR: Geo pointer token decode failed: geo='%s' idx=%u token=0x%08X",
+                       _Node->mName.begin(), i, _TokenValue);
+            _Node->mData[i] = 0;
         } else {
-            _Node->mData[i] = (uintptr_t) _Value;
+            _Node->mData[i] = (uintptr_t) _RawValue;
         }
     }
 

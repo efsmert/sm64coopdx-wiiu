@@ -311,6 +311,13 @@ s32 render_textured_transition(s8 fadeTimer, s8 transTime, struct WarpTransition
 #endif
 
 s32 render_screen_transition(s8 fadeTimer, s8 transType, u8 transTime, struct WarpTransitionData *transData) {
+#ifdef TARGET_WII_U
+    (void)fadeTimer;
+    (void)transType;
+    (void)transTime;
+    (void)transData;
+    return TRUE;
+#endif
     switch (transType) {
         case WARP_TRANSITION_FADE_FROM_COLOR:
             return render_fade_transition_from_color(fadeTimer, transTime, transData);

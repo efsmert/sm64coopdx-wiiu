@@ -4,6 +4,7 @@ extern "C" {
 #include <assert.h>
 #include "sm64.h"
 #include "include/textures.h"
+#include "game/player_palette.h"
 #include "src/pc/lua/smlua.h"
 #include "src/pc/lua/utils/smlua_gfx_utils.h"
 #include "include/macros.h"
@@ -537,7 +538,8 @@ static s64 ParseGfxSymbolArg(GfxData* aGfxData, DataNode<Gfx>* aNode, u64* pToke
         for (auto& _Node : aGfxData->mVertices) {
             if (_Arg == _Node->mName) {
                 auto base = DynOS_Vtx_Parse(aGfxData, _Node)->mData;
-                auto data = (u8*)base + _Offset;
+                // `vtx + N` in source is Vtx-element arithmetic, not byte arithmetic.
+                auto data = base + _Offset;
                 if (_Offset != 0) {
                     aGfxData->mPointerOffsetList.Add({ (const void*)data, (const void*)base });
                 }
@@ -1134,15 +1136,23 @@ void DynOS_Gfx_Load(BinFile *aFile, GfxData *aGfxData) {
     _Node->mSize = aFile->Read<u32>();
     _Node->mData = gfx_allocate_internal(NULL, _Node->mSize);
     for (u32 i = 0; i != _Node->mSize; ++i) {
-        u32 _WordsW0 = aFile->Read<u32>();
-        u32 _WordsW1 = aFile->Read<u32>();
-        void *_Ptr = DynOS_Pointer_Load(aFile, aGfxData, _WordsW1, 0, &_Node->mFlags);
+        // Display lists are interpreted as native u32 words by the renderer.
+        // Read using BinFile::Read<u32>() so big-endian targets (Wii U) get the
+        // correct host-endian word values.
+        u32 _W0 = aFile->Read<u32>();
+        u32 _W1 = aFile->Read<u32>();
+
+        void *_Ptr = DynOS_Pointer_Load(aFile, aGfxData, _W1, 0, &_Node->mFlags);
+        _Node->mData[i].words.w0 = (uintptr_t) _W0;
         if (_Ptr) {
-            _Node->mData[i].words.w0 = (uintptr_t) _WordsW0;
             _Node->mData[i].words.w1 = (uintptr_t) _Ptr;
+        } else if (_W1 == FUNCTION_CODE || _W1 == POINTER_CODE || _W1 == LUA_VAR_CODE) {
+            aGfxData->mErrorCount++;
+            PrintError("ERROR: Gfx pointer token decode failed: dl='%s' idx=%u token=0x%08X",
+                       _Node->mName.begin(), i, _W1);
+            _Node->mData[i].words.w1 = 0;
         } else {
-            _Node->mData[i].words.w0 = (uintptr_t) _WordsW0;
-            _Node->mData[i].words.w1 = (uintptr_t) _WordsW1;
+            _Node->mData[i].words.w1 = (uintptr_t) _W1;
         }
     }
 
@@ -1386,6 +1396,12 @@ static Array<String> TokenizeGfxCommand(const std::string &command) {
 
 static bool CheckGfxLength(GfxData *aGfxData, Gfx *gfx, u32 lengthToWrite) {
     if (lengthToWrite > 1) {
+        uintptr_t gfxAddr = (uintptr_t) gfx;
+        if (gfx == NULL || (gfxAddr & 0x7) != 0) {
+            PrintDataErrorGfx("  ERROR: Invalid display list pointer: 0x%08x", (u32) gfxAddr);
+            return false;
+        }
+
         u32 gfxLength = gfx_get_length(gfx);
         if (gfxLength < lengthToWrite) {
             PrintDataErrorGfx("  ERROR: Cannot write %u commands to display list of length: %u", lengthToWrite, gfxLength);

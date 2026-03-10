@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "../network.h"
 #include "pc/mods/mods.h"
 #include "pc/mods/mods_utils.h"
@@ -6,6 +7,48 @@
 #include "pc/djui/djui_panel_join_message.h"
 #include "pc/debuglog.h"
 #include "pc/mods/mod_cache.h"
+#include "pc/network/coopnet/coopnet.h"
+#include "pc/network/coopnet/coopnet_id.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#include <stdarg.h>
+#include <stdio.h>
+#define MODLIST_WIIU_LOG_BUFSZ 256
+static void modlist_wiiu_logf(const char* fmt, ...) {
+    char buffer[MODLIST_WIIU_LOG_BUFSZ];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    OSReport("%s", buffer);
+}
+#else
+static void modlist_wiiu_logf(UNUSED const char* fmt, ...) { }
+#endif
+
+static u8 sModListReplyLocalIndex = 0;
+
+static bool modlist_sender_valid(u8 localIndex) {
+    if (localIndex == UNKNOWN_LOCAL_INDEX) {
+        return true;
+    }
+
+    if (gNetworkPlayerServer != NULL) {
+        return gNetworkPlayerServer->localIndex == localIndex;
+    }
+
+#ifdef COOPNET
+    uint64_t hostUserId = (uint64_t)coopnet_raw_get_id(0);
+    if (hostUserId != 0) {
+        u8 hostLocalIndex = coopnet_user_id_to_local_index(hostUserId);
+        if (hostLocalIndex != UNKNOWN_LOCAL_INDEX) {
+            return hostLocalIndex == localIndex;
+        }
+    }
+#endif
+
+    return false;
+}
 
 void network_send_mod_list_request(void) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
@@ -23,18 +66,36 @@ void network_send_mod_list_request(void) {
     snprintf(version, MAX_VERSION_LENGTH, "%s", get_version());
     packet_write(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
 
+    u8 serverLocal = network_get_server_local_index();
     network_send_to(PACKET_DESTINATION_SERVER, &p);
+    modlist_wiiu_logf("coopnet-modlist: send request packetType=%u version=%s serverLocal=%d hostUserId=%llu\n",
+                      (unsigned)p.buffer[0],
+                      version,
+                      (int)serverLocal,
+                      (unsigned long long)coopnet_raw_get_id(0));
     LOG_INFO("sending mod list request");
     gAllowOrderedPacketClear = 0;
 }
 
-void network_receive_mod_list_request(UNUSED struct Packet* p) {
+void network_receive_mod_list_request(struct Packet* p) {
     if (gNetworkType != NT_SERVER) {
         LOG_ERROR("Network type should be server!");
         return;
     }
     LOG_INFO("received mod list request");
 
+#ifdef COOPNET
+    if (p->addr != NULL) {
+        uint64_t userId = 0;
+        memcpy(&userId, p->addr, sizeof(userId));
+        u8 reserved = coopnet_reserve_user_id(userId);
+        if (reserved != UNKNOWN_LOCAL_INDEX) {
+            p->localIndex = reserved;
+        }
+    }
+#endif
+
+    sModListReplyLocalIndex = (p->localIndex == UNKNOWN_LOCAL_INDEX) ? 0 : p->localIndex;
     network_send_mod_list();
 }
 
@@ -51,7 +112,7 @@ void network_send_mod_list(void) {
     LOG_INFO("sending version: %s", version);
     packet_write(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
     packet_write(&p, &gActiveMods.entryCount, sizeof(u16));
-    network_send_to(0, &p);
+    network_send_to(sModListReplyLocalIndex, &p);
 
     LOG_INFO("sent mod list (%u):", gActiveMods.entryCount);
     for (u16 i = 0; i < gActiveMods.entryCount; i++) {
@@ -87,7 +148,7 @@ void network_send_mod_list(void) {
         packet_write(&p, &mod->pausable, sizeof(u8));
         packet_write(&p, &mod->ignoreScriptWarnings, sizeof(u8));
         packet_write(&p, &mod->fileCount, sizeof(u16));
-        network_send_to(0, &p);
+        network_send_to(sModListReplyLocalIndex, &p);
         LOG_INFO("    '%s': %llu", mod->name, (u64)mod->size);
 
         for (u16 j = 0; j < mod->fileCount; j++) {
@@ -102,14 +163,14 @@ void network_send_mod_list(void) {
             packet_write(&p, file->relativePath, sizeof(u8) * relativePathLength);
             packet_write(&p, &fileSize, sizeof(u64));
             packet_write(&p, &file->dataHash[0], sizeof(u8) * 16);
-            network_send_to(0, &p);
+            network_send_to(sModListReplyLocalIndex, &p);
             LOG_INFO("      '%s': %llu", file->relativePath, (u64)file->size);
         }
     }
 
     struct Packet p2 = { 0 };
     packet_init(&p2, PACKET_MOD_LIST_DONE, true, PLMT_NONE);
-    network_send_to(0, &p2);
+    network_send_to(sModListReplyLocalIndex, &p2);
 
     packet_ordered_end();
 
@@ -117,12 +178,13 @@ void network_send_mod_list(void) {
 
 void network_receive_mod_list(struct Packet* p) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
+#ifdef COOPNET
+    coopnet_mark_client_join_progress("modlist_header");
+#endif
 
-    if (p->localIndex != UNKNOWN_LOCAL_INDEX) {
-        if (gNetworkPlayerServer == NULL || gNetworkPlayerServer->localIndex != p->localIndex) {
-            LOG_ERROR("Received mod list from known local index '%d'", p->localIndex);
-            return;
-        }
+    if (!modlist_sender_valid(p->localIndex)) {
+        LOG_ERROR("Received mod list from invalid local index '%d'", p->localIndex);
+        return;
     }
 
     if (gRemoteMods.entries != NULL) {
@@ -158,6 +220,7 @@ void network_receive_mod_list(struct Packet* p) {
         return;
     }
 
+    modlist_wiiu_logf("coopnet-modlist: recv header entries=%u\n", gRemoteMods.entryCount);
     LOG_INFO("received mod list (%u):", gRemoteMods.entryCount);
 }
 
@@ -165,11 +228,9 @@ void network_receive_mod_list_entry(struct Packet* p) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
 
     // make sure it was sent by the server
-    if (p->localIndex != UNKNOWN_LOCAL_INDEX) {
-        if (gNetworkPlayerServer == NULL || gNetworkPlayerServer->localIndex != p->localIndex) {
-            LOG_ERROR("Received download from known local index '%d'", p->localIndex);
-            return;
-        }
+    if (!modlist_sender_valid(p->localIndex)) {
+        LOG_ERROR("Received mod list entry from invalid local index '%d'", p->localIndex);
+        return;
     }
 
     // get mod index
@@ -221,8 +282,23 @@ void network_receive_mod_list_entry(struct Packet* p) {
     // get other fields
     u16 relativePathLength = 0;
     packet_read(p, &relativePathLength, sizeof(u16));
+    if (relativePathLength >= SYS_MAX_PATH) {
+        LOG_ERROR("Received mod relative path with invalid length: %u", relativePathLength);
+        return;
+    }
     packet_read(p, mod->relativePath, relativePathLength * sizeof(u8));
-    packet_read(p, &mod->size, sizeof(u64));
+    if (p->error) {
+        LOG_ERROR("Failed to read mod relative path");
+        return;
+    }
+    mod->relativePath[relativePathLength] = '\0';
+    u64 remoteModSize = 0;
+    packet_read(p, &remoteModSize, sizeof(u64));
+    if (remoteModSize > (u64)((size_t)-1)) {
+        LOG_ERROR("Received mod size too large for platform: %llu", (unsigned long long)remoteModSize);
+        return;
+    }
+    mod->size = (size_t)remoteModSize;
     packet_read(p, &mod->isDirectory, sizeof(u8));
     packet_read(p, &mod->pausable, sizeof(u8));
     packet_read(p, &mod->ignoreScriptWarnings, sizeof(u8));
@@ -252,6 +328,10 @@ void network_receive_mod_list_entry(struct Packet* p) {
 
     // get file count and allocate them
     packet_read(p, &mod->fileCount, sizeof(u16));
+    if (mod->fileCount > 8192) {
+        LOG_ERROR("Received mod file count too large: %u", mod->fileCount);
+        return;
+    }
     mod->files = calloc(mod->fileCount, sizeof(struct ModFile));
     if (mod->files == NULL) {
         LOG_ERROR("Failed to allocate mod files!");
@@ -262,11 +342,9 @@ void network_receive_mod_list_entry(struct Packet* p) {
 void network_receive_mod_list_file(struct Packet* p) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
 
-    if (p->localIndex != UNKNOWN_LOCAL_INDEX) {
-        if (gNetworkPlayerServer == NULL || gNetworkPlayerServer->localIndex != p->localIndex) {
-            LOG_ERROR("Received download from known local index '%d'", p->localIndex);
-            return;
-        }
+    if (!modlist_sender_valid(p->localIndex)) {
+        LOG_ERROR("Received mod list file from invalid local index '%d'", p->localIndex);
+        return;
     }
 
     // get mod index
@@ -297,8 +375,23 @@ void network_receive_mod_list_file(struct Packet* p) {
 
     u16 relativePathLength = 0;
     packet_read(p, &relativePathLength, sizeof(u16));
+    if (relativePathLength >= SYS_MAX_PATH) {
+        LOG_ERROR("Received mod file path with invalid length: %u", relativePathLength);
+        return;
+    }
     packet_read(p, file->relativePath, relativePathLength * sizeof(u8));
-    packet_read(p, &file->size, sizeof(u64));
+    if (p->error) {
+        LOG_ERROR("Failed to read mod file path");
+        return;
+    }
+    file->relativePath[relativePathLength] = '\0';
+    u64 remoteFileSize = 0;
+    packet_read(p, &remoteFileSize, sizeof(u64));
+    if (remoteFileSize > (u64)((size_t)-1)) {
+        LOG_ERROR("Received mod file size too large for platform: %llu", (unsigned long long)remoteFileSize);
+        return;
+    }
+    file->size = (size_t)remoteFileSize;
     packet_read(p, &file->dataHash, sizeof(u8) * 16);
     file->fp = NULL;
     LOG_INFO("      '%s': %llu", file->relativePath, (u64)file->size);
@@ -317,11 +410,9 @@ void network_receive_mod_list_file(struct Packet* p) {
 void network_receive_mod_list_done(struct Packet* p) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
 
-    if (p->localIndex != UNKNOWN_LOCAL_INDEX) {
-        if (gNetworkPlayerServer == NULL || gNetworkPlayerServer->localIndex != p->localIndex) {
-            LOG_ERROR("Received download from known local index '%d'", p->localIndex);
-            return;
-        }
+    if (!modlist_sender_valid(p->localIndex)) {
+        LOG_ERROR("Received mod list done from invalid local index '%d'", p->localIndex);
+        return;
     }
 
     size_t totalSize = 0;
@@ -331,5 +422,6 @@ void network_receive_mod_list_done(struct Packet* p) {
     }
     gRemoteMods.size = totalSize;
 
+    modlist_wiiu_logf("coopnet-modlist: recv done totalBytes=%llu\n", (unsigned long long)gRemoteMods.size);
     network_start_download_requests();
 }

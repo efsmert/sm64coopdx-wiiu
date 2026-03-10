@@ -6,6 +6,12 @@
 #include "pc/network/network.h"
 #include "pc/utils/misc.h"
 #include "pc/configfile.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+#endif
 
 #define DJUI_JOIN_MESSAGE_ELAPSE 60
 bool gDjuiPanelJoinMessageVisible = false;
@@ -15,7 +21,55 @@ char gDownloadEstimate[DOWNLOAD_ESTIMATE_LENGTH] = "";
 
 static struct DjuiText* sPanelText = NULL;
 static bool sDisplayingError = false;
+#ifdef TARGET_WII_U
+#define DJUI_MENU_STATE_BUFSZ 512
+static char sLastMenuStateLine[DJUI_MENU_STATE_BUFSZ] = "";
+static char sLastMenuHighlightLine[DJUI_MENU_STATE_BUFSZ] = "";
+static void djui_menu_state_logf(const char* fmt, ...) {
+    char buffer[DJUI_MENU_STATE_BUFSZ];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    if (strcmp(buffer, sLastMenuStateLine) == 0) { return; }
+    snprintf(sLastMenuStateLine, sizeof(sLastMenuStateLine), "%s", buffer);
+    OSReport("%s", buffer);
+}
 
+static void djui_menu_state_sanitize_text(const char* text, char* out, size_t outSize) {
+    if (outSize == 0) { return; }
+    if (text == NULL) { out[0] = '\0'; return; }
+    size_t j = 0;
+    for (size_t i = 0; text[i] != '\0' && j + 1 < outSize; i++) {
+        char c = text[i];
+        if (c == '"' || c == '\n' || c == '\r') { c = ' '; }
+        out[j++] = c;
+    }
+    out[j] = '\0';
+}
+
+static void djui_menu_highlight_logf(const char* focus, const char* text) {
+    char buffer[DJUI_MENU_STATE_BUFSZ];
+    char safeText[128];
+    djui_menu_state_sanitize_text(text, safeText, sizeof(safeText));
+    snprintf(buffer, sizeof(buffer), "menu_highlight: page=join_message focus=%s text=\"%s\"\n", focus, safeText);
+    if (strcmp(buffer, sLastMenuHighlightLine) == 0) { return; }
+    snprintf(sLastMenuHighlightLine, sizeof(sLastMenuHighlightLine), "%s", buffer);
+    OSReport("%s", buffer);
+}
+#else
+static void djui_menu_state_logf(UNUSED const char* fmt, ...) { }
+static void djui_menu_highlight_logf(UNUSED const char* focus, UNUSED const char* text) { }
+#endif
+
+static void djui_panel_join_message_hover_cancel(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=join_message focus=cancel\n");
+    djui_menu_highlight_logf("cancel", DLANG(MENU, CANCEL));
+}
+
+static void djui_panel_join_message_on_destroy(UNUSED struct DjuiBase* caller) {
+    djui_menu_state_logf("menu_state: page=join_message_closed\n");
+}
 
 void djui_panel_join_message_error(char* message) {
     djui_panel_join_message_create(NULL);
@@ -25,6 +79,7 @@ void djui_panel_join_message_error(char* message) {
 
 void djui_panel_join_message_cancel(struct DjuiBase* caller) {
     if (network_is_reconnecting()) { return; }
+    djui_menu_state_logf("menu_state: page=join_message action=cancel\n");
     network_reset_reconnect_and_rehost();
     network_shutdown(true, false, false, false);
     djui_panel_menu_back(caller);
@@ -58,6 +113,12 @@ void djui_panel_join_message_create(struct DjuiBase* caller) {
 
     // don't recreate panel if it's already visible
     if (gDjuiPanelJoinMessageVisible) { return; }
+#ifdef TARGET_WII_U
+    sLastMenuStateLine[0] = '\0';
+    sLastMenuHighlightLine[0] = '\0';
+#endif
+    djui_menu_state_logf("menu_state: page=join_message opened\n");
+    djui_menu_highlight_logf("cancel", DLANG(MENU, CANCEL));
 
     struct DjuiThreePanel* panel = djui_panel_menu_create(DLANG(JOIN_MESSAGE, JOINING), true);
     struct DjuiBase* body = djui_three_panel_get_body(panel);
@@ -78,11 +139,14 @@ void djui_panel_join_message_create(struct DjuiBase* caller) {
         gDownloadProgress = 0;
         djui_progress_bar_create(body, &gDownloadProgress, 0.0f, 1.0f, false);
 
-        djui_button_create(body, DLANG(MENU, CANCEL), DJUI_BUTTON_STYLE_BACK, djui_panel_join_message_cancel);
+        struct DjuiButton* cancel = djui_button_create(body, DLANG(MENU, CANCEL), DJUI_BUTTON_STYLE_BACK, djui_panel_join_message_cancel);
+        djui_interactable_hook_hover(&cancel->base, djui_panel_join_message_hover_cancel, NULL);
     }
     panel->on_back = djui_panel_join_message_back;
 
-    djui_panel_add(caller, panel, NULL);
+    struct DjuiPanel* p = djui_panel_add(caller, panel, NULL);
+    if (!p) { return; }
+    p->on_panel_destroy = djui_panel_join_message_on_destroy;
     gDjuiPanelJoinMessageVisible = true;
     sDisplayingError = false;
 }

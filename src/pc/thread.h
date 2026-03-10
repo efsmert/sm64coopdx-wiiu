@@ -1,7 +1,14 @@
 #ifndef THREADING_H
 #define THREADING_H
 
+#include <stddef.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <pthread.h>
+#ifdef __cplusplus
+}
+#endif
 
 #include "cliopts.h"
 #include "types.h"

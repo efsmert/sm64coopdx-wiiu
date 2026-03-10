@@ -12,6 +12,11 @@
 #include "pc/configfile.h"
 #include "pc/debuglog.h"
 #include "macros.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#include <stdarg.h>
+#include <string.h>
+#endif
 
 #ifdef COOPNET
 
@@ -23,6 +28,72 @@ static struct DjuiButton* sRefreshButton = NULL;
 static struct DjuiThreePanel* sDescriptionPanel = NULL;
 static struct DjuiText* sTooltip = NULL;
 static char* sPassword = NULL;
+static bool sPrivateLobbies = false;
+static s32 sLobbyEntryCount = 0;
+static const char* djui_panel_join_lobbies_page_name(void);
+#ifdef TARGET_WII_U
+#define DJUI_MENU_STATE_BUFSZ 512
+static char sLastMenuStateLine[DJUI_MENU_STATE_BUFSZ] = "";
+static char sLastMenuHighlightLine[DJUI_MENU_STATE_BUFSZ] = "";
+static void djui_menu_state_logf(const char* fmt, ...) {
+    char buffer[DJUI_MENU_STATE_BUFSZ];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    if (strcmp(buffer, sLastMenuStateLine) == 0) { return; }
+    snprintf(sLastMenuStateLine, sizeof(sLastMenuStateLine), "%s", buffer);
+    OSReport("%s", buffer);
+}
+
+static void djui_menu_state_sanitize_text(const char* text, char* out, size_t outSize) {
+    if (outSize == 0) { return; }
+    if (text == NULL) { out[0] = '\0'; return; }
+    size_t j = 0;
+    for (size_t i = 0; text[i] != '\0' && j + 1 < outSize; i++) {
+        char c = text[i];
+        if (c == '"' || c == '\n' || c == '\r') { c = ' '; }
+        out[j++] = c;
+    }
+    out[j] = '\0';
+}
+
+static void djui_menu_highlight_logf(const char* focus, const char* text) {
+    char buffer[DJUI_MENU_STATE_BUFSZ];
+    char safeText[192];
+    djui_menu_state_sanitize_text(text, safeText, sizeof(safeText));
+    snprintf(buffer, sizeof(buffer), "menu_highlight: page=%s focus=%s text=\"%s\"\n",
+             djui_panel_join_lobbies_page_name(),
+             focus,
+             safeText);
+    if (strcmp(buffer, sLastMenuHighlightLine) == 0) { return; }
+    snprintf(sLastMenuHighlightLine, sizeof(sLastMenuHighlightLine), "%s", buffer);
+    OSReport("%s", buffer);
+}
+
+static void djui_menu_highlight_lobby_logf(struct DjuiLobbyEntry* entry) {
+    char buffer[DJUI_MENU_STATE_BUFSZ];
+    char safeText[192];
+    djui_menu_state_sanitize_text(entry->host, safeText, sizeof(safeText));
+    snprintf(buffer, sizeof(buffer), "menu_highlight: page=%s focus=lobby text=\"%s\" row=%d lobbyId=%llu disabled=%d\n",
+             djui_panel_join_lobbies_page_name(),
+             safeText,
+             entry->rowIndex,
+             (unsigned long long)entry->lobbyId,
+             entry->disabled ? 1 : 0);
+    if (strcmp(buffer, sLastMenuHighlightLine) == 0) { return; }
+    snprintf(sLastMenuHighlightLine, sizeof(sLastMenuHighlightLine), "%s", buffer);
+    OSReport("%s", buffer);
+}
+#else
+static void djui_menu_state_logf(UNUSED const char* fmt, ...) { }
+static void djui_menu_highlight_logf(UNUSED const char* focus, UNUSED const char* text) { }
+static void djui_menu_highlight_lobby_logf(UNUSED struct DjuiLobbyEntry* entry) { }
+#endif
+
+static const char* djui_panel_join_lobbies_page_name(void) {
+    return sPrivateLobbies ? "join_private_lobbies" : "join_public_lobbies";
+}
 
 static void djui_panel_join_lobby_description_create(void) {
     f32 bodyHeight = 600;
@@ -59,6 +130,12 @@ static void djui_panel_join_lobby_description_create(void) {
 static void djui_lobby_on_hover(struct DjuiBase* base) {
     struct DjuiLobbyEntry* entry = (struct DjuiLobbyEntry*)base;
     djui_text_set_text(sTooltip, entry->description);
+    djui_menu_state_logf("menu_state: page=%s focus=lobby row=%d lobbyId=%llu disabled=%d\n",
+                         djui_panel_join_lobbies_page_name(),
+                         entry->rowIndex,
+                         (unsigned long long)entry->lobbyId,
+                         entry->disabled ? 1 : 0);
+    djui_menu_highlight_lobby_logf(entry);
 }
 
 static void djui_lobby_on_hover_end(UNUSED struct DjuiBase* base) {
@@ -66,8 +143,14 @@ static void djui_lobby_on_hover_end(UNUSED struct DjuiBase* base) {
 }
 
 void djui_panel_join_lobby(struct DjuiBase* caller) {
-    gCoopNetDesiredLobby = (uint64_t)caller->tag;
+    struct DjuiLobbyEntry* entry = (struct DjuiLobbyEntry*)caller;
+    uint64_t lobbyId = entry->lobbyId != 0 ? entry->lobbyId : (uint64_t)caller->tag;
+    gCoopNetDesiredLobby = lobbyId;
     snprintf(gCoopNetPassword, 64, "%s", sPassword);
+    djui_menu_state_logf("menu_state: page=%s action=join_lobby row=%d lobbyId=%llu\n",
+                         djui_panel_join_lobbies_page_name(),
+                         entry->rowIndex,
+                         (unsigned long long)lobbyId);
     network_reset_reconnect_and_rehost();
     network_set_system(NS_COOPNET);
     network_init(NT_CLIENT, false);
@@ -95,7 +178,18 @@ void djui_panel_join_query(uint64_t aLobbyId, UNUSED uint64_t aOwnerId, uint16_t
 
     struct DjuiBase* layoutBase = &sLobbyLayout->base;
     struct DjuiLobbyEntry* entry = djui_lobby_entry_create(layoutBase, (char*)aHostName, (char*)mode, playerText, (char*)aDescription, disabled, djui_panel_join_lobby, djui_lobby_on_hover, djui_lobby_on_hover_end);
+    entry->rowIndex = sLobbyEntryCount;
+    entry->lobbyId = aLobbyId;
+    entry->disabled = disabled;
     entry->base.tag = (s64)aLobbyId;
+    djui_menu_state_logf("menu_state: page=%s query=row row=%d lobbyId=%llu disabled=%d host='%s' mode='%s'\n",
+                         djui_panel_join_lobbies_page_name(),
+                         entry->rowIndex,
+                         (unsigned long long)aLobbyId,
+                         disabled ? 1 : 0,
+                         aHostName,
+                         mode);
+    sLobbyEntryCount++;
     djui_paginated_update_page_buttons(sLobbyPaginated);
 }
 
@@ -114,6 +208,9 @@ void djui_panel_join_query_finish(void) {
         djui_text_set_drop_shadow(text, 64, 64, 64, 100);
     }
     djui_paginated_update_page_buttons(sLobbyPaginated);
+    djui_menu_state_logf("menu_state: page=%s query=finish lobbyCount=%d\n",
+                         djui_panel_join_lobbies_page_name(),
+                         sLobbyEntryCount);
 }
 
 void djui_panel_join_lobbies_on_destroy(UNUSED struct DjuiBase* caller) {
@@ -122,6 +219,12 @@ void djui_panel_join_lobbies_on_destroy(UNUSED struct DjuiBase* caller) {
     sRefreshButton = NULL;
     sLobbyLayout = NULL;
     sLobbyPaginated = NULL;
+    sPrivateLobbies = false;
+    sLobbyEntryCount = 0;
+#ifdef TARGET_WII_U
+    sLastMenuStateLine[0] = '\0';
+    sLastMenuHighlightLine[0] = '\0';
+#endif
 
     if (sDescriptionPanel != NULL) {
         djui_base_destroy(&sDescriptionPanel->base);
@@ -129,10 +232,27 @@ void djui_panel_join_lobbies_on_destroy(UNUSED struct DjuiBase* caller) {
     }
 }
 
+static void djui_panel_join_lobbies_hover_rules(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=%s focus=rules\n", djui_panel_join_lobbies_page_name());
+    djui_menu_highlight_logf("rules", DLANG(RULES, RULES));
+}
+
+static void djui_panel_join_lobbies_hover_back(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=%s focus=back\n", djui_panel_join_lobbies_page_name());
+    djui_menu_highlight_logf("back", DLANG(MENU, BACK));
+}
+
+static void djui_panel_join_lobbies_hover_refresh(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=%s focus=refresh\n", djui_panel_join_lobbies_page_name());
+    djui_menu_highlight_logf("refresh", DLANG(LOBBIES, REFRESH));
+}
+
 void djui_panel_join_lobbies_refresh(UNUSED struct DjuiBase* caller) {
     djui_base_destroy_children(&sLobbyLayout->base);
     djui_text_set_text(sRefreshButton->text, DLANG(LOBBIES, REFRESHING));
     djui_base_set_enabled(&sRefreshButton->base, false);
+    sLobbyEntryCount = 0;
+    djui_menu_state_logf("menu_state: page=%s query=start\n", djui_panel_join_lobbies_page_name());
     djui_paginated_update_page_buttons(sLobbyPaginated);
     ns_coopnet_query(djui_panel_join_query, djui_panel_join_query_finish, sPassword);
 }
@@ -145,6 +265,10 @@ void djui_panel_join_lobbies_create(struct DjuiBase* caller, const char* passwor
     if (sPassword) { free(sPassword); sPassword = NULL; }
     sPassword = strdup(password);
     bool private = (strlen(password) > 0);
+    sPrivateLobbies = private;
+    sLobbyEntryCount = 0;
+    djui_menu_state_logf("menu_state: page=%s opened\n", djui_panel_join_lobbies_page_name());
+    djui_menu_highlight_logf("refresh", DLANG(LOBBIES, REFRESH));
     if (!private && configRulesVersion != RULES_VERSION) {
         djui_panel_rules_create(caller);
         return;
@@ -170,18 +294,23 @@ void djui_panel_join_lobbies_create(struct DjuiBase* caller, const char* passwor
             djui_text_set_alignment(text, DJUI_HALIGN_CENTER, DJUI_VALIGN_CENTER);
         }
 
-        if (!private) { djui_button_create(body, DLANG(RULES, RULES), DJUI_BUTTON_STYLE_NORMAL, djui_panel_rules_create); }
+        if (!private) {
+            struct DjuiButton* rulesButton = djui_button_create(body, DLANG(RULES, RULES), DJUI_BUTTON_STYLE_NORMAL, djui_panel_rules_create);
+            djui_interactable_hook_hover(&rulesButton->base, djui_panel_join_lobbies_hover_rules, NULL);
+        }
 
         struct DjuiRect* rect2 = djui_rect_container_create(body, 64);
         {
             struct DjuiButton* button1 = djui_button_create(&rect2->base, DLANG(MENU, BACK), DJUI_BUTTON_STYLE_BACK, djui_panel_menu_back);
             djui_base_set_size(&button1->base, 0.485f, 64);
             djui_base_set_alignment(&button1->base, DJUI_HALIGN_LEFT, DJUI_VALIGN_TOP);
+            djui_interactable_hook_hover(&button1->base, djui_panel_join_lobbies_hover_back, NULL);
 
             sRefreshButton = djui_button_create(&rect2->base, querying ? DLANG(LOBBIES, REFRESHING) : DLANG(LOBBIES, REFRESH), DJUI_BUTTON_STYLE_NORMAL, djui_panel_join_lobbies_refresh);
             djui_base_set_size(&sRefreshButton->base, 0.485f, 64);
             djui_base_set_alignment(&sRefreshButton->base, DJUI_HALIGN_RIGHT, DJUI_VALIGN_TOP);
             djui_base_set_enabled(&sRefreshButton->base, false);
+            djui_interactable_hook_hover(&sRefreshButton->base, djui_panel_join_lobbies_hover_refresh, NULL);
             defaultBase = &sRefreshButton->base;
         }
     }

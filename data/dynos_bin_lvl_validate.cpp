@@ -52,7 +52,13 @@ static void LvlCmd_Add(LevelScript script[], size_t size) {
     }
 
     // extract the id and make sure it's unique
-    u8 id = (u8)(script[0] & 0xFF);
+    u8 id = (u8)(
+#if DYNOS_HOST_BIG_ENDIAN
+        (((u32) script[0]) >> 24)
+#else
+        (((u32) script[0]) & 0xFF)
+#endif
+    );
     if (sCommandMap.count(id) != 0) { return; }
 
     // add the command to the map
@@ -151,11 +157,25 @@ void DynOS_Lvl_Validate_Begin() {
 }
 
 bool DynOS_Lvl_Validate_RequirePointer(u32 value) {
+    const u8 cmdId = (u8)(
+#if DYNOS_HOST_BIG_ENDIAN
+        (value >> 24)
+#else
+        (value & 0xFF)
+#endif
+    );
+
     // figure out which command we're inside
-    if (sCurCommandId == 0xFF || sCurCommandOffset >= sCommandMap[sCurCommandId].size) {
-        u8 id = (u8)(value & 0xFF);
-        sCurCommandId = id;
+    if (sCurCommandId == 0xFF || sCommandMap.count(sCurCommandId) == 0 || sCurCommandOffset >= sCommandMap[sCurCommandId].size) {
+        sCurCommandId = cmdId;
         sCurCommandOffset = 0;
+    }
+
+    if (sCommandMap.count(sCurCommandId) == 0) {
+        // Unknown command ID: don't treat payload as pointers, but keep
+        // advancing through words to avoid getting stuck.
+        sCurCommandOffset++;
+        return false;
     }
 
     // figure out if we expect a pointer

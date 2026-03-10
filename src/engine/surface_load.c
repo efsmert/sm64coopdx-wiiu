@@ -20,6 +20,9 @@
 #include "game/hardcoded.h"
 #include "pc/network/network.h"
 #include "pc/lua/smlua_hooks.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#endif
 
 /**
  * Partitions for course and object surfaces. The arrays represent
@@ -596,7 +599,6 @@ void load_area_terrain(s16 index, s16 *data, s8 *surfaceRooms, s16 *macroObjects
     while (TRUE) {
         terrainLoadType = *data;
         data++;
-
         if (TERRAIN_LOAD_IS_SURFACE_TYPE_LOW(terrainLoadType)) {
             load_static_surfaces(&data, vertexData, terrainLoadType, &surfaceRooms);
         } else if (terrainLoadType == TERRAIN_LOAD_VERTICES) {

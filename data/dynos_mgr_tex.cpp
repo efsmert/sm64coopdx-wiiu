@@ -2,6 +2,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <whb/log.h>
 #include "dynos.cpp.h"
 extern "C" {
 #include "pc/gfx/gfx.h"
@@ -221,8 +222,59 @@ u8 *DynOS_Tex_ConvertToRGBA32(const u8 *aData, u64 aLength, s32 aFormat, s32 aSi
 
 typedef struct GfxRenderingAPI GRAPI;
 static void DynOS_Tex_Upload(DataNode<TexData> *aNode, GRAPI *aGfxRApi, s32 aTile, s32 aTexId) {
+    static u32 sDynosTexUploadLogCount = 0;
+    static bool sArenaFortsUploadPhaseLogged = false;
+    if (sDynosTexUploadLogCount < 24 && aNode != NULL && aNode->mData != NULL) {
+        const u8 *rgba = aNode->mData->mRawData.begin();
+        const u32 width = (u32) aNode->mData->mRawWidth;
+        const u32 height = (u32) aNode->mData->mRawHeight;
+        u32 alpha0 = 0;
+        u32 alpha255 = 0;
+        u32 alphaOther = 0;
+        if (rgba != NULL && width > 0 && height > 0) {
+            const u32 pixels = width * height;
+            for (u32 i = 0; i < pixels; i++) {
+                u8 alpha = rgba[i * 4 + 3];
+                if (alpha == 0) {
+                    alpha0++;
+                } else if (alpha == 255) {
+                    alpha255++;
+                } else {
+                    alphaOther++;
+                }
+            }
+            WHBLogPrintf("dynos_tex_upload: name='%s' tile=%d tex=%d %ux%u alpha0=%u alpha255=%u alphaOther=%u first=%02x%02x%02x%02x",
+                         aNode->mName.begin(),
+                         aTile,
+                         aTexId,
+                         width,
+                         height,
+                         alpha0,
+                         alpha255,
+                         alphaOther,
+                         rgba[0],
+                         rgba[1],
+                         rgba[2],
+                         rgba[3]);
+            sDynosTexUploadLogCount++;
+        }
+    }
+    if (!sArenaFortsUploadPhaseLogged && aNode != NULL && aNode->mName == "arena_forts_dl_dirt2_rgba16") {
+        WHBLogPrintf("dynos_tex_upload: before_select name='%s' tile=%d tex=%d",
+                     aNode->mName.begin(), aTile, aTexId);
+    }
     aGfxRApi->select_texture(aTile, aTexId);
+    if (!sArenaFortsUploadPhaseLogged && aNode != NULL && aNode->mName == "arena_forts_dl_dirt2_rgba16") {
+        WHBLogPrintf("dynos_tex_upload: after_select name='%s'", aNode->mName.begin());
+    }
     aGfxRApi->upload_texture(aNode->mData->mRawData.begin(), aNode->mData->mRawWidth, aNode->mData->mRawHeight);
+    // Keep DynOS uploads aligned with the regular texture path: bind sampler
+    // state only after the texture object exists in the backend.
+    aGfxRApi->set_sampler_parameters(aTile, false, 0, 0);
+    if (!sArenaFortsUploadPhaseLogged && aNode != NULL && aNode->mName == "arena_forts_dl_dirt2_rgba16") {
+        WHBLogPrintf("dynos_tex_upload: after_upload name='%s'", aNode->mName.begin());
+        sArenaFortsUploadPhaseLogged = true;
+    }
     aNode->mData->mUploaded = true;
 }
 
@@ -261,7 +313,6 @@ static bool DynOS_Tex_Cache(THN **aOutput, DataNode<TexData> *aNode, s32 aTile, 
         (*_Node)->texture_id = aGfxRApi->new_texture();
     }
     aGfxRApi->select_texture(aTile, (*_Node)->texture_id);
-    aGfxRApi->set_sampler_parameters(aTile, false, 0, 0);
     (*_Node)->next = NULL;
     (*_Node)->texture_addr = aNode;
     (*_Node)->fmt = G_IM_FMT_RGBA;

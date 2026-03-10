@@ -12,6 +12,7 @@ extern char gCoopNetPassword[];
 bool ns_coopnet_query(QueryCallbackPtr callback, QueryFinishCallbackPtr finishCallback, const char* password);
 bool ns_coopnet_is_connected(void);
 void ns_coopnet_update(void);
+void coopnet_mark_client_join_progress(const char* phase);
 
 #endif
 #endif

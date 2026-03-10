@@ -47,7 +47,7 @@ void network_send_network_players_request(void) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
     struct Packet p = { 0 };
     packet_init(&p, PACKET_NETWORK_PLAYERS_REQUEST, true, PLMT_NONE);
-    network_send_to((gNetworkPlayerServer != NULL) ? gNetworkPlayerServer->localIndex : 0, &p);
+    network_send_to(network_get_server_local_index(), &p);
     LOG_INFO("sending network players request");
 }
 

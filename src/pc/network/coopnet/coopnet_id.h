@@ -8,6 +8,8 @@ void coopnet_clear_dest_ids(void);
 uint64_t coopnet_get_dest_id(uint64_t userId);
 
 u8 coopnet_user_id_to_local_index(uint64_t userId);
+u8 coopnet_reserve_user_id(uint64_t userId);
+void coopnet_clear_user_id(uint64_t userId);
 void coopnet_set_user_id(uint8_t localIndex, uint64_t userId);
 uint64_t coopnet_get_local_user_id(void);
 void coopnet_set_local_user_id(uint64_t userId);

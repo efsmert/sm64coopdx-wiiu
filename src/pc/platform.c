@@ -292,12 +292,27 @@ static void sys_fatal_impl(const char *msg) {
     exit(1);
 }
 
-#elif defined(HAVE_SDL2)
+#elif defined(HAVE_SDL2) || defined(TARGET_WII_U)
 
 // we can just ask SDL for most of this shit if we have it
 #include <SDL2/SDL.h>
 
+#ifdef TARGET_WII_U
+static const char *wiiu_default_write_path(void) {
+    static char path[SYS_MAX_PATH];
+    if (path[0] != '\0') {
+        return path;
+    }
+    // `pc_main.c` mounts SD and creates this directory before fs_init().
+    snprintf(path, sizeof(path), "%s", "/vol/external01/wiiu/apps/sm64coopdx");
+    return path;
+}
+#endif
+
 const char *sys_user_path(void) {
+#ifdef TARGET_WII_U
+    return wiiu_default_write_path();
+#else
     static char path[SYS_MAX_PATH] = { 0 };
     if ('\0' != path[0]) { return path; }
 
@@ -328,10 +343,14 @@ const char *sys_user_path(void) {
     if (path[len-1] == '/' || path[len-1] == '\\') { path[len-1] = 0; }
 
     return path;
+#endif
 }
 
 const char *sys_resource_path(void)
 {
+#ifdef TARGET_WII_U
+    return "/vol/content";
+#else
 #ifdef __APPLE__ // Kinda lazy, but I don't know how to add CoreFoundation.framework
     static char path[SYS_MAX_PATH];
     if ('\0' != path[0]) { return path; }
@@ -347,6 +366,7 @@ const char *sys_resource_path(void)
 #endif
 
     return sys_exe_path_dir();
+#endif
 }
 
 const char *sys_exe_path_dir(void) {
@@ -364,6 +384,14 @@ const char *sys_exe_path_dir(void) {
 }
 
 const char *sys_exe_path_file(void) {
+#ifdef TARGET_WII_U
+    static char path[SYS_MAX_PATH];
+    if (path[0] != '\0') { return path; }
+    if (getcwd(path, sizeof(path)) == NULL) {
+        snprintf(path, sizeof(path), "%s", ".");
+    }
+    return path;
+#else
     static char path[SYS_MAX_PATH];
     if ('\0' != path[0]) { return path; }
 
@@ -382,6 +410,7 @@ const char *sys_exe_path_file(void) {
     }
 
     return path;
+#endif
 }
 
 static void sys_fatal_impl(const char *msg) {

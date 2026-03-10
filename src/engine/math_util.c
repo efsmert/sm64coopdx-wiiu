@@ -1,4 +1,5 @@
 #include <ultra64.h>
+#include <float.h>
 
 #include "sm64.h"
 #include "engine/graph_node.h"
@@ -882,4 +883,3 @@ OPTIMIZE_O3 Vec3fp get_pos_from_transform_mtx(VEC_OUT Vec3f dest, Mat4 objMtx, M
         
     return dest;
 }
-

@@ -17,6 +17,16 @@ struct PacketLinkedList {
 struct PacketLinkedList* head = NULL;
 struct PacketLinkedList* tail = NULL;
 
+static u16 packet_seq_read_le(const struct Packet* p) {
+#ifdef TARGET_WII_U
+    return (u16)p->buffer[1] | ((u16)p->buffer[2] << 8);
+#else
+    u16 seqId = 0;
+    memcpy(&seqId, &p->buffer[1], sizeof(u16));
+    return seqId;
+#endif
+}
+
 static void remove_node_from_list(struct PacketLinkedList* node) {
     if (node == head) {
         head = node->next;
@@ -63,8 +73,7 @@ void network_forget_all_reliable_from(u8 localIndex) {
 
 void network_send_ack(struct Packet* p) {
     // grab seq num
-    u16 seqId = 0;
-    memcpy(&seqId, &p->buffer[1], 2);
+    u16 seqId = packet_seq_read_le(p);
     p->seqId = seqId;
     p->reliable = (seqId != 0);
     if (seqId == 0) { return; }

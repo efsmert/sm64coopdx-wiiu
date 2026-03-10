@@ -5,7 +5,26 @@
 #include "pc/djui/djui.h"
 
 static SOCKET sCurSocket = INVALID_SOCKET;
-static struct sockaddr_in6 sAddr[MAX_PLAYERS] = { 0 };
+
+#ifdef TARGET_WII_U
+typedef struct sockaddr_in SocketAddress;
+#define SOCKET_ADDR_FAMILY AF_INET
+#define SOCKET_ADDR_FAMILY_FIELD sin_family
+#define SOCKET_ADDR_STR_LEN INET_ADDRSTRLEN
+#define SOCKET_ADDR_PORT_FIELD sin_port
+#define SOCKET_ADDR_IP_FIELD sin_addr
+#define SOCKET_ADDR_SET_ANY(addr) ((addr).sin_addr.s_addr = htonl(INADDR_ANY))
+#else
+typedef struct sockaddr_in6 SocketAddress;
+#define SOCKET_ADDR_FAMILY AF_INET6
+#define SOCKET_ADDR_FAMILY_FIELD sin6_family
+#define SOCKET_ADDR_STR_LEN INET6_ADDRSTRLEN
+#define SOCKET_ADDR_PORT_FIELD sin6_port
+#define SOCKET_ADDR_IP_FIELD sin6_addr
+#define SOCKET_ADDR_SET_ANY(addr) ((addr).sin6_addr = in6addr_any)
+#endif
+
+static SocketAddress sAddr[MAX_PLAYERS] = { 0 };
 struct addrinfo hints;
 struct addrinfo *result, *i;
 
@@ -14,13 +33,16 @@ char gGetHostName[MAX_CONFIG_STRING] = "";
 // Resolves a hostname to an IP address. Current limitation: It still only gets the first address it sees and returns.
 // getaddrinfo() is smart enough to prioritize IPv4 if the user is not in an IPv6 enabled network, so this shouldn't be a problem for now.
 // TODO: Store all found addresses somewhere and make the game try to connect to each of them if one fails.
-void resolve_domain(struct sockaddr_in6 *addr) {
+static void resolve_domain(SocketAddress *addr) {
     // non zero value if getaddrinfo throws an error.
     int error;
 
     // set hints
     memset(&hints, 0, sizeof(hints));
     hints.ai_socktype = SOCK_DGRAM;
+#ifdef TARGET_WII_U
+    hints.ai_family = AF_INET;
+#endif
 
     // sanity check: remove square brackets from configJoinIp. getaddrinfo doesn't like those, at least on Linux.
     if (configJoinIp[0] == '[') {
@@ -42,8 +64,8 @@ void resolve_domain(struct sockaddr_in6 *addr) {
     if (error == 0) {
         // Iterate through results
         for (i = result; i != NULL; i = i->ai_next) {
-            // buffer for IPv6 address
-            char str[INET6_ADDRSTRLEN];
+            char str[SOCKET_ADDR_STR_LEN];
+#ifndef TARGET_WII_U
             // IPv6 address:
             if (i->ai_addr->sa_family == AF_INET6) {
                 struct sockaddr_in6 *p = (struct sockaddr_in6 *)i->ai_addr;
@@ -74,6 +96,15 @@ void resolve_domain(struct sockaddr_in6 *addr) {
                 freeaddrinfo(result);
                 return;
             }
+#else
+            if (i->ai_addr->sa_family == AF_INET) {
+                struct sockaddr_in *p = (struct sockaddr_in *)i->ai_addr;
+                addr->sin_addr = p->sin_addr;
+                snprintf(configJoinIp, MAX_CONFIG_STRING, "%s", inet_ntop(AF_INET, &p->sin_addr, str, sizeof(str)));
+                freeaddrinfo(result);
+                return;
+            }
+#endif
         }
     } else {
         LOG_ERROR("getaddrinfo() failed with error code %i: %s", error, gai_strerror(error));
@@ -81,12 +112,12 @@ void resolve_domain(struct sockaddr_in6 *addr) {
 }
 
 static int socket_bind(SOCKET socket, unsigned int port) {
-    struct sockaddr_in6 rxAddr;
+    SocketAddress rxAddr;
     // Clean struct to prevent rare cases of binding errors due to garbage data in that memory location. This just happened to me randomly on Windows and left me very confused.
-    memset(&rxAddr, 0, sizeof(struct sockaddr_in6));
-    rxAddr.sin6_family = AF_INET6;
-    rxAddr.sin6_port = htons(port);
-    rxAddr.sin6_addr = in6addr_any;
+    memset(&rxAddr, 0, sizeof(SocketAddress));
+    rxAddr.SOCKET_ADDR_FAMILY_FIELD = SOCKET_ADDR_FAMILY;
+    rxAddr.SOCKET_ADDR_PORT_FIELD = htons(port);
+    SOCKET_ADDR_SET_ANY(rxAddr);
 
     int rc = bind(socket, (SOCKADDR *)&rxAddr, sizeof(rxAddr));
 
@@ -97,8 +128,8 @@ static int socket_bind(SOCKET socket, unsigned int port) {
     return rc;
 }
 
-static int socket_send(SOCKET socket, struct sockaddr_in6* addr, u8* buffer, u16 bufferLength) {
-    int addrSize = sizeof(struct sockaddr_in6);
+static int socket_send(SOCKET socket, SocketAddress* addr, u8* buffer, u16 bufferLength) {
+    int addrSize = sizeof(SocketAddress);
     int rc = sendto(socket, (char*)buffer, bufferLength, 0, (struct sockaddr*)addr, addrSize);
     if (rc != SOCKET_ERROR) { return NO_ERROR; }
 
@@ -109,14 +140,14 @@ static int socket_send(SOCKET socket, struct sockaddr_in6* addr, u8* buffer, u16
     return rc;
 }
 
-static int socket_receive(SOCKET socket, struct sockaddr_in6* rxAddr, u8* buffer, u16 bufferLength, u16* receiveLength, u8* localIndex) {
+static int socket_receive(SOCKET socket, SocketAddress* rxAddr, u8* buffer, u16 bufferLength, u16* receiveLength, u8* localIndex) {
     *receiveLength = 0;
 
-    RX_ADDR_SIZE_TYPE rxAddrSize = sizeof(struct sockaddr_in6);
+    RX_ADDR_SIZE_TYPE rxAddrSize = sizeof(SocketAddress);
     int rc = recvfrom(socket, (char*)buffer, bufferLength, 0, (struct sockaddr*)rxAddr, &rxAddrSize);
 
     for (int i = 1; i < MAX_PLAYERS; i++) {
-        if (memcmp(rxAddr, &sAddr[i], sizeof(struct sockaddr_in6)) == 0) {
+        if (memcmp(rxAddr, &sAddr[i], sizeof(SocketAddress)) == 0) {
             *localIndex = i;
             break;
         }
@@ -163,15 +194,15 @@ static bool ns_socket_initialize(enum NetworkType networkType, UNUSED bool recon
         }
         LOG_INFO("bound to port %u", port);
     } else if (networkType == NT_CLIENT) {
-        struct sockaddr_in6 addr;
+        SocketAddress addr;
         // set and clean struct to prevent garbage data
-        memset(&addr, 0, sizeof(struct sockaddr_in6));
+        memset(&addr, 0, sizeof(SocketAddress));
         // save the port to send to
-        sAddr[0].sin6_family = AF_INET6;
-        sAddr[0].sin6_port = htons(port);
+        sAddr[0].SOCKET_ADDR_FAMILY_FIELD = SOCKET_ADDR_FAMILY;
+        sAddr[0].SOCKET_ADDR_PORT_FIELD = htons(port);
         // resolve and get address list to connect
         resolve_domain(&addr);
-        sAddr[0].sin6_addr = addr.sin6_addr;
+        sAddr[0].SOCKET_ADDR_IP_FIELD = addr.SOCKET_ADDR_IP_FIELD;
         LOG_INFO("connecting to %s, port %u", configJoinIp, port);
         // copy hostname to be saved to config file
         snprintf(configJoinIp, MAX_CONFIG_STRING, "%s", gGetHostName);
@@ -200,8 +231,9 @@ static s64 ns_socket_get_id(UNUSED u8 localId) {
 
 static char* ns_socket_get_id_str(u8 localId) {
     if (localId == UNKNOWN_LOCAL_INDEX) { localId = 0; }
-    static char id_str[INET6_ADDRSTRLEN] = { 0 };
-    snprintf(id_str, INET6_ADDRSTRLEN, "%s", inet_ntop(AF_INET6, &sAddr[localId].sin6_addr, id_str, sizeof(id_str)));
+    static char id_str[SOCKET_ADDR_STR_LEN] = { 0 };
+    snprintf(id_str, SOCKET_ADDR_STR_LEN, "%s",
+             inet_ntop(SOCKET_ADDR_FAMILY, &sAddr[localId].SOCKET_ADDR_IP_FIELD, id_str, sizeof(id_str)));
     return id_str;
 }
 
@@ -215,18 +247,18 @@ static void ns_socket_save_id(u8 localId, UNUSED s64 networkId) {
 static void ns_socket_clear_id(u8 localId) {
     if (localId == 0) { return; }
     SOFT_ASSERT(localId < MAX_PLAYERS);
-    memset(&sAddr[localId], 0, sizeof(struct sockaddr_in6));
+    memset(&sAddr[localId], 0, sizeof(SocketAddress));
     LOG_INFO("cleared addr for id %d", localId);
 }
 
 static void* ns_socket_dup_addr(u8 localIndex) {
-    void* address = malloc(sizeof(struct sockaddr_in6));
-    memcpy(address, &sAddr[localIndex], sizeof(struct sockaddr_in6));
+    void* address = malloc(sizeof(SocketAddress));
+    memcpy(address, &sAddr[localIndex], sizeof(SocketAddress));
     return address;
 }
 
 static bool ns_socket_match_addr(void* addr1, void* addr2) {
-    return !memcmp(addr1, addr2, sizeof(struct sockaddr_in6));
+    return !memcmp(addr1, addr2, sizeof(SocketAddress));
 }
 
 static void ns_socket_update(void) {
@@ -249,8 +281,8 @@ static int ns_socket_send(u8 localIndex, void* address, u8* data, u16 dataLength
         if (gNetworkType == NT_CLIENT && gNetworkPlayers[localIndex].type != NPT_SERVER) { return SOCKET_ERROR; }
     }
 
-    struct sockaddr_in6* userAddr = &sAddr[localIndex];
-    if (localIndex == 0 && address != NULL) { userAddr = (struct sockaddr_in6*)address; }
+    SocketAddress* userAddr = &sAddr[localIndex];
+    if (localIndex == 0 && address != NULL) { userAddr = (SocketAddress*)address; }
 
     int rc = socket_send(sCurSocket, userAddr, data, dataLength);
     if (rc) {
@@ -271,7 +303,7 @@ static void ns_socket_shutdown(UNUSED bool reconnecting) {
     socket_shutdown(sCurSocket);
     sCurSocket = INVALID_SOCKET;
     for (u16 i = 0; i < MAX_PLAYERS; i++) {
-        memset(&sAddr[i], 0, sizeof(struct sockaddr_in6));
+        memset(&sAddr[i], 0, sizeof(SocketAddress));
     }
     LOG_INFO("shutdown");
 }

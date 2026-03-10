@@ -79,7 +79,15 @@ static bool is_rom_valid(const std::string romPath) {
 }
 
 inline static bool scan_path_for_rom(const char *dir) {
-    for (const auto &entry: std::filesystem::directory_iterator(dir)) {
+    std::error_code ec;
+    if (dir == nullptr || dir[0] == '\0' || !fs::exists(dir, ec) || ec) {
+        return false;
+    }
+
+    for (const auto &entry: std::filesystem::directory_iterator(
+        dir, fs::directory_options::skip_permission_denied, ec
+    )) {
+        if (ec) { break; }
         std::string path = entry.path().generic_string();
         if (path_ends_with(path.c_str(), ".z64")) {
             if (is_rom_valid(path)) { return true; }
@@ -95,6 +103,24 @@ void legacy_folder_handler(void) {
 
 bool main_rom_handler(void) {
     if (scan_path_for_rom(fs_get_write_path(""))) { return true; }
+#ifdef TARGET_WII_U
+    // Wii U users cannot drag-and-drop, so search common SD/content folders.
+    std::string writePath = fs_get_write_path("");
+    if (!writePath.empty()) {
+        std::string romsPath = writePath + "roms";
+        if (scan_path_for_rom(romsPath.c_str())) { return true; }
+    }
+
+    const char* resourcePath = sys_resource_path();
+    if (scan_path_for_rom(resourcePath)) { return true; }
+    if (resourcePath && resourcePath[0] != '\0') {
+        std::string resourceRomsPath = std::string(resourcePath) + "/roms";
+        if (scan_path_for_rom(resourceRomsPath.c_str())) { return true; }
+    }
+
+    if (scan_path_for_rom("/vol/external01/wiiu/apps/sm64coopdx")) { return true; }
+    if (scan_path_for_rom("/vol/external01/wiiu/apps/sm64coopdx/roms")) { return true; }
+#endif
     scan_path_for_rom(sys_exe_path_dir());
     return gRomIsValid;
 }

@@ -4,20 +4,34 @@
 
 #include "graph_node.h"
 
+#ifdef TARGET_WII_U
+extern u8 gGeoLayoutDynosLittleEndian;
+static inline s16 geo_script_read_s16(s16 value) {
+    if (gGeoLayoutDynosLittleEndian) {
+        return (s16) __builtin_bswap16((u16) value);
+    }
+    return value;
+}
+#else
+static inline s16 geo_script_read_s16(s16 value) {
+    return value;
+}
+#endif
+
 #if IS_64_BIT
 static s16 next_s16_in_geo_script(s16 **src) {
     s16 ret;
     if (((uintptr_t)(*src) & 7) == 4) {
          *src += 2; // skip 32 bits
     }
-    ret = *(*src)++;
+    ret = geo_script_read_s16(*(*src)++);
     if (((uintptr_t)(*src) & 7) == 4) {
          *src += 2; // skip 32 bits
     }
     return ret;
 }
 #else
-#define next_s16_in_geo_script(src) (*(*src)++)
+#define next_s16_in_geo_script(src) (geo_script_read_s16(*(*src)++))
 #endif
 
 /**

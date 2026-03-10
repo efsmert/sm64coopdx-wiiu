@@ -6,6 +6,8 @@
 #include "game/memory.h"
 #include "graph_node.h"
 #include "geo_commands.h"
+#include "level_script.h"
+#include "data/dynos.c.h"
 
 typedef void (*GeoLayoutCommandProc)(void);
 
@@ -105,6 +107,7 @@ s16 gGeoLayoutStackIndex; // similar to SP register in MIPS
 UNUSED s16 D_8038BD7C;
 s16 gGeoLayoutReturnIndex; // similar to RA register in MIPS
 u8 *gGeoLayoutCommand;
+u8 gGeoLayoutDynosLittleEndian = 0;
 
 u32 unused_8038B894[3] = { 0 };
 
@@ -902,6 +905,7 @@ struct GraphNode *process_geo_layout(struct DynamicPool *pool, void *segptr) {
     gGeoLayoutReturnIndex = 2; // stack index is often copied here?
 
     gGeoLayoutCommand = segmented_to_virtual(segptr);
+    gGeoLayoutDynosLittleEndian = dynos_level_is_custom_geo_layout_ptr(gGeoLayoutCommand);
 
     gGraphNodePool = pool;
 
@@ -911,6 +915,8 @@ struct GraphNode *process_geo_layout(struct DynamicPool *pool, void *segptr) {
     while (gGeoLayoutCommand != NULL) {
         GeoLayoutJumpTable[gGeoLayoutCommand[0x00]]();
     }
+
+    gGeoLayoutDynosLittleEndian = 0;
 
     if (gCurRootGraphNode) {
         gCurRootGraphNode->georef = (const void *) segptr;

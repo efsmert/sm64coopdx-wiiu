@@ -102,7 +102,7 @@ void sequence_channel_init(struct SequenceChannel *seqChannel) {
 }
 
 s32 seq_channel_set_layer(struct SequenceChannel *seqChannel, s32 layerIndex) {
-    if (layerIndex >= LAYERS_MAX) { return 0; }
+    if (seqChannel == NULL || layerIndex < 0 || layerIndex >= LAYERS_MAX) { return -1; }
     struct SequenceChannelLayer *layer;
 
     if (seqChannel->layers[layerIndex] == NULL) {
@@ -579,6 +579,19 @@ s64 m64_read_s64(struct M64ScriptState* state) {
     ret = (((u64)*(state->pc++)) <<  8) | ret;
     ret = (((u64)*(state->pc++)) <<  0) | ret;
     return ret;
+}
+
+static s32 audio_bank_id_valid(s32 bankId) {
+    if (bankId < 0 || bankId >= (s32) ARRAY_COUNT(gBankLoadStatus)) {
+        return FALSE;
+    }
+    if (gCtlEntries == NULL || gAlCtlHeader == NULL) {
+        return FALSE;
+    }
+    if (bankId >= (s32) gAlCtlHeader->seqCount) {
+        return FALSE;
+    }
+    return TRUE;
 }
 
 #if defined(VERSION_SH)
@@ -1576,21 +1589,33 @@ u8 get_instrument(struct SequenceChannel *seqChannel, u8 instId, struct Instrume
     return instId;
 #else
     UNUSED u32 pad;
+    const s32 bankId = (s32) seqChannel->bankId;
 
-    if (instId >= gCtlEntries[seqChannel->bankId].numInstruments) {
-        instId = gCtlEntries[seqChannel->bankId].numInstruments;
+    if (!audio_bank_id_valid(bankId)) {
+        gAudioErrorFlags = ((bankId & 0xff) << 8) + instId + 0x60000;
+        *instOut = NULL;
+        return 0;
+    }
+
+    if (gCtlEntries[bankId].instruments == NULL) {
+        gAudioErrorFlags = ((bankId & 0xff) << 8) + instId + 0x60001;
+        *instOut = NULL;
+        return 0;
+    }
+
+    if (instId >= gCtlEntries[bankId].numInstruments) {
+        instId = gCtlEntries[bankId].numInstruments;
         if (instId == 0) {
+            *instOut = NULL;
             return 0;
         }
         instId--;
     }
 
-    inst = gCtlEntries[seqChannel->bankId].instruments[instId];
+    inst = gCtlEntries[bankId].instruments[instId];
     if (inst == NULL) {
-        struct SequenceChannel seqChannelCpy = *seqChannel;
-
         while (instId != 0xff) {
-            inst = gCtlEntries[seqChannelCpy.bankId].instruments[instId];
+            inst = gCtlEntries[bankId].instruments[instId];
             if (inst != NULL) {
                 break;
             }
@@ -2774,23 +2799,33 @@ void sequence_player_process_sequence(struct SequencePlayer *seqPlayer) {
                         break;
 
                     case 0xc1: // seq_initchannels_extended
-                        u64v = m64_read_s64(state);
+                    {
+                        u64 upperMask = m64_read_s64(state);
+                        u64 lowerMask = m64_read_s64(state);
 #ifdef BITS_32
-                        if (u64v == 0xb33f) {
-                            m64_read_s64(state);
-                            sequence_player_init_channels_extended(seqPlayer, u64v, 0xffffffffffffffff);
+                        if (upperMask == 0xb33fULL && lowerMask == 0ULL) {
+                            upperMask = ~0ULL;
+                            lowerMask = ~0ULL;
                         } else {
-                            sequence_player_init_channels_extended(seqPlayer, 0x0, m64_read_s64(state));
+                            upperMask &= 0xffffffffULL;
+                            lowerMask &= 0xffffffffULL;
                         }
-#else
-                        sequence_player_init_channels_extended(seqPlayer, u64v, m64_read_s64(state));
 #endif
+                        sequence_player_init_channels_extended(seqPlayer, upperMask, lowerMask);
                         break;
+                    }
 
                     case 0xc0: // seq_disablechannels_extended
-                        u64v = m64_read_s64(state);
-                        sequence_player_disable_channels_extended(seqPlayer, u64v, m64_read_s64(state));
+                    {
+                        u64 upperMask = m64_read_s64(state);
+                        u64 lowerMask = m64_read_s64(state);
+#ifdef BITS_32
+                        upperMask &= 0xffffffffULL;
+                        lowerMask &= 0xffffffffULL;
+#endif
+                        sequence_player_disable_channels_extended(seqPlayer, upperMask, lowerMask);
                         break;
+                    }
 
                     case 0xd5: // seq_setmutescale
                         temp = m64_read_u8(state);

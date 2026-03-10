@@ -22,6 +22,11 @@
 #define PORTAMENTO_MODE_5 5
 
 #define COPT 0
+
+#define COPT_BANK_ID_VALID(bankId) \
+    (gCtlEntries != NULL && gAlCtlHeader != NULL \
+        && (u32)(bankId) < (u32) ARRAY_COUNT(gBankLoadStatus) \
+        && (u32)(bankId) < (u32) gAlCtlHeader->seqCount)
 #if COPT
 #define M64_READ_U8(state, dst) \
     dst = m64_read_u8(state);
@@ -94,22 +99,29 @@
 { \
 struct AdsrSettings *adsr = _adsr; \
 struct Instrument **instOut = _instOut;\
+    s32 _bankId = (s32) (*seqChannel).bankId; \
     u8 _instId = instId; \
     struct Instrument *inst; \
     UNUSED u32 pad; \
+    if (!COPT_BANK_ID_VALID(_bankId) || gCtlEntries[_bankId].instruments == NULL) { \
+        gAudioErrorFlags = ((_bankId & 0xff) << 8) + _instId + 0x60000; \
+        *instOut = NULL; \
+        dst = 0; \
+        goto ret ## l; \
+    } \
         /* copt inlines instId here  */ \
-    if (instId >= gCtlEntries[(*seqChannel).bankId].numInstruments) { \
-        _instId = gCtlEntries[(*seqChannel).bankId].numInstruments; \
+    if (instId >= gCtlEntries[_bankId].numInstruments) { \
+        _instId = gCtlEntries[_bankId].numInstruments; \
         if (_instId == 0) { \
             dst = 0; \
             goto ret ## l; \
         } \
         _instId--; \
     } \
-    inst = gCtlEntries[(*seqChannel).bankId].instruments[_instId]; \
+    inst = gCtlEntries[_bankId].instruments[_instId]; \
     if (inst == NULL) { \
         while (_instId != 0xff) { \
-            inst = gCtlEntries[(*seqChannel).bankId].instruments[_instId]; \
+            inst = gCtlEntries[_bankId].instruments[_instId]; \
             if (inst != NULL) { \
                 goto gi ## l; \
             } \
@@ -214,17 +226,32 @@ void seq_channel_layer_process_script(struct SequenceChannelLayer *layer) {
                 break;
 
             case 0xfc: // layer_call
+                if (state->depth >= ARRAY_COUNT(state->stack)) {
+                    layer->stopSomething = TRUE;
+                    seq_channel_layer_disable(layer);
+                    return;
+                }
                 M64_READ_S16(state, sp3A);
                 state->depth++, state->stack[state->depth - 1] = state->pc;
                 state->pc = seqPlayer->seqData + sp3A;
                 break;
 
             case 0xf8: // layer_loop; loop start, N iterations (or 256 if N = 0)
+                if (state->depth >= ARRAY_COUNT(state->stack)) {
+                    layer->stopSomething = TRUE;
+                    seq_channel_layer_disable(layer);
+                    return;
+                }
                 M64_READ_U8(state, state->remLoopIters[state->depth]);
                 state->depth++, state->stack[state->depth - 1] = state->pc;
                 break;
 
             case 0xf7: // layer_loopend
+                if (state->depth == 0) {
+                    layer->stopSomething = TRUE;
+                    seq_channel_layer_disable(layer);
+                    return;
+                }
                 if (--state->remLoopIters[state->depth - 1] != 0) {
                     state->pc = state->stack[state->depth - 1];
                 } else {
@@ -386,9 +413,15 @@ l1138:
             layer->stopSomething = TRUE;
         } else {
             if (seqChannel->instOrWave == 0) { // drum
+                s32 bankId = (s32) seqChannel->bankId;
+
                 cmdSemitone += (*seqChannel).transposition + (*layer).transposition;
-                if (cmdSemitone >= gCtlEntries[seqChannel->bankId].numDrums) {
-                    cmdSemitone = gCtlEntries[seqChannel->bankId].numDrums;
+                if (!COPT_BANK_ID_VALID(bankId) || gCtlEntries[bankId].drums == NULL) {
+                    layer->stopSomething = TRUE;
+                    goto skip;
+                }
+                if (cmdSemitone >= gCtlEntries[bankId].numDrums) {
+                    cmdSemitone = gCtlEntries[bankId].numDrums;
                     if (cmdSemitone == 0) {
                         // this goto looks a bit like a function return...
                         layer->stopSomething = TRUE;
@@ -398,7 +431,7 @@ l1138:
                     cmdSemitone--;
                 }
 
-                drum = gCtlEntries[seqChannel->bankId].drums[cmdSemitone];
+                drum = gCtlEntries[bankId].drums[cmdSemitone];
                 if (drum == NULL) {
                     layer->stopSomething = TRUE;
                 } else {

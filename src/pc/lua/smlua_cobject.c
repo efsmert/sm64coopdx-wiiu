@@ -15,6 +15,11 @@
 #include "pc/lua/utils/smlua_collision_utils.h"
 #include "pc/lua/utils/smlua_obj_utils.h"
 #include "pc/mods/mods.h"
+#ifdef TARGET_WII_U
+#define SMLUA_COBJ_WIIU_LOG(...)
+#else
+#define SMLUA_COBJ_WIIU_LOG(...)
+#endif
 
 extern struct LuaObjectTable sLuaObjectTable[LOT_MAX];
 
@@ -331,12 +336,6 @@ struct LuaObjectField* smlua_get_custom_field(lua_State* L, u32 lot, int keyInde
     u32 fieldIndex = smlua_to_integer(L, -1);
     lua_pop(L, 1);
     bool validFieldIndex = (fieldIndex >= OBJECT_CUSTOM_FIELDS_START && fieldIndex < OBJECT_NUM_FIELDS);
-    if (!gSmLuaConvertSuccess || !validFieldIndex) {
-        lua_pop(L, 1); // pop value table
-        lua_pop(L, 1); // pop _custom_fields
-        LUA_STACK_CHECK_END(L);
-        return NULL;
-    }
 
     // get _lvt
     lua_pushstring(L, "_lvt");
@@ -344,7 +343,7 @@ struct LuaObjectField* smlua_get_custom_field(lua_State* L, u32 lot, int keyInde
     u32 lvt = smlua_to_integer(L, -1);
     lua_pop(L, 1);
     bool validLvt = (lvt == LVT_U32 || lvt == LVT_S32 || lvt == LVT_F32);
-    if (!gSmLuaConvertSuccess || !validLvt) {
+    if (!gSmLuaConvertSuccess || !validFieldIndex || !validLvt) {
         lua_pop(L, 1); // pop value table
         lua_pop(L, 1); // pop _custom_fields
         LUA_STACK_CHECK_END(L);
@@ -693,14 +692,26 @@ static int smlua_cpointer_set(UNUSED lua_State* L) { return 0; }
 
 void smlua_cobject_init_globals(void) {
     lua_State* L = gLuaState;
+#ifdef TARGET_WII_U
+    LOG_INFO("wiiu-lua: cobject_init_globals begin");
+    SMLUA_COBJ_WIIU_LOG("smlua: cobject init begin\n");
+#endif
 
     // Create object pools
     lua_newtable(L);
     gSmLuaCObjects = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_newtable(L);
     gSmLuaCPointers = luaL_ref(L, LUA_REGISTRYINDEX);
+#ifdef TARGET_WII_U
+    LOG_INFO("wiiu-lua: cobject pools ready (obj=%d ptr=%d)", gSmLuaCObjects, gSmLuaCPointers);
+    SMLUA_COBJ_WIIU_LOG("smlua: cobject pools obj=%d ptr=%d\n", gSmLuaCObjects, gSmLuaCPointers);
+#endif
 
     // Create metatables
+#ifdef TARGET_WII_U
+    LOG_INFO("wiiu-lua: creating CObject metatable");
+    SMLUA_COBJ_WIIU_LOG("smlua: cobject metatable create\n");
+#endif
     luaL_newmetatable(L, "CObject");
     luaL_Reg cObjectMethods[] = {
         { "__index",    smlua__get_field },
@@ -712,6 +723,12 @@ void smlua_cobject_init_globals(void) {
     };
     luaL_setfuncs(L, cObjectMethods, 0);
     gSmLuaCObjectMetatable = luaL_ref(L, LUA_REGISTRYINDEX);
+#ifdef TARGET_WII_U
+    LOG_INFO("wiiu-lua: CObject metatable ref=%d", gSmLuaCObjectMetatable);
+    LOG_INFO("wiiu-lua: creating CPointer metatable");
+    SMLUA_COBJ_WIIU_LOG("smlua: cobject metatable ref=%d\n", gSmLuaCObjectMetatable);
+    SMLUA_COBJ_WIIU_LOG("smlua: cpointer metatable create\n");
+#endif
     luaL_newmetatable(L, "CPointer");
     luaL_Reg cPointerMethods[] = {
         { "__index",    smlua_cpointer_get },
@@ -723,6 +740,10 @@ void smlua_cobject_init_globals(void) {
     };
     luaL_setfuncs(L, cPointerMethods, 0);
     gSmLuaCPointerMetatable = luaL_ref(L, LUA_REGISTRYINDEX);
+#ifdef TARGET_WII_U
+    LOG_INFO("wiiu-lua: CPointer metatable ref=%d", gSmLuaCPointerMetatable);
+    SMLUA_COBJ_WIIU_LOG("smlua: cpointer metatable ref=%d\n", gSmLuaCPointerMetatable);
+#endif
 
 #define EXPOSE_GLOBAL_ARRAY(lot, ptr, iterator) \
     { \

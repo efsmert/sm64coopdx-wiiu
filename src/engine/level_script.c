@@ -1,5 +1,8 @@
 #include <ultra64.h>
 #include <string.h>
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#endif
 
 #include "sm64.h"
 #include "audio/external.h"
@@ -64,6 +67,11 @@ static uintptr_t *sStackBase = NULL;
 static s16 sScriptStatus;
 static s32 sRegister;
 static struct LevelCommand *sCurrentCmd;
+
+#define CMD_GET_S16(offset) CMD_GET(s16, offset)
+#define CMD_GET_U16(offset) CMD_GET(u16, offset)
+#define CMD_GET_S32(offset) CMD_GET(s32, offset)
+#define CMD_GET_U32(offset) CMD_GET(u32, offset)
 
 static u8 sFinishedLoadingPerm = false;
 
@@ -141,7 +149,7 @@ static void area_check_red_coin_or_secret(void *arg, bool isMacroObject) {
 }
 
 static void level_cmd_load_and_execute(void) {
-    load_segment(CMD_GET(s16, 2), CMD_GET(void *, 4), CMD_GET(void *, 8), MEMORY_POOL_LEFT);
+    load_segment(CMD_GET_S16(2), CMD_GET(void *, 4), CMD_GET(void *, 8), MEMORY_POOL_LEFT);
 
     *sStackTop++ = (uintptr_t) NEXT_CMD;
     *sStackTop++ = (uintptr_t) sStackBase;
@@ -153,7 +161,7 @@ static void level_cmd_load_and_execute(void) {
 static void level_cmd_exit_and_execute(void) {
     void *targetAddr = CMD_GET(void *, 12);
 
-    load_segment(CMD_GET(s16, 2), CMD_GET(void *, 4), CMD_GET(void *, 8),
+    load_segment(CMD_GET_S16(2), CMD_GET(void *, 4), CMD_GET(void *, 8),
             MEMORY_POOL_LEFT);
 
     sStackTop = sStackBase;
@@ -170,7 +178,7 @@ static void level_cmd_sleep(void) {
     sScriptStatus = SCRIPT_PAUSED;
 
     if (sDelayFrames == 0) {
-        sDelayFrames = CMD_GET(s16, 2);
+        sDelayFrames = CMD_GET_S16(2);
     } else if (--sDelayFrames == 0) {
         sCurrentCmd = CMD_NEXT;
         sScriptStatus = SCRIPT_RUNNING;
@@ -181,7 +189,7 @@ static void level_cmd_sleep2(void) {
     sScriptStatus = SCRIPT_PAUSED2;
 
     if (sDelayFrames2 == 0) {
-        sDelayFrames2 = CMD_GET(s16, 2);
+        sDelayFrames2 = CMD_GET_S16(2);
     } else if (--sDelayFrames2 == 0) {
         sCurrentCmd = CMD_NEXT;
         sScriptStatus = SCRIPT_RUNNING;
@@ -203,7 +211,7 @@ static void level_cmd_return(void) {
 
 static void level_cmd_jump_and_link_push_arg(void) {
     *sStackTop++ = (uintptr_t) NEXT_CMD;
-    *sStackTop++ = CMD_GET(s16, 2);
+    *sStackTop++ = CMD_GET_S16(2);
     sCurrentCmd = CMD_NEXT;
 }
 
@@ -228,7 +236,7 @@ static void level_cmd_loop_begin(void) {
 }
 
 static void level_cmd_loop_until(void) {
-    if (eval_script_op(CMD_GET(u8, 2), CMD_GET(s32, 4)) != 0) {
+    if (eval_script_op(CMD_GET(u8, 2), CMD_GET_S32(4)) != 0) {
         sCurrentCmd = CMD_NEXT;
         sStackTop -= 2;
     } else {
@@ -237,7 +245,7 @@ static void level_cmd_loop_until(void) {
 }
 
 static void level_cmd_jump_if(void) {
-    if (eval_script_op(CMD_GET(u8, 2), CMD_GET(s32, 4)) != 0) {
+    if (eval_script_op(CMD_GET(u8, 2), CMD_GET_S32(4)) != 0) {
         sCurrentCmd = segmented_to_virtual(CMD_GET(void *, 8));
     } else {
         sCurrentCmd = CMD_NEXT;
@@ -245,7 +253,7 @@ static void level_cmd_jump_if(void) {
 }
 
 static void level_cmd_jump_and_link_if(void) {
-    if (eval_script_op(CMD_GET(u8, 2), CMD_GET(s32, 4)) != 0) {
+    if (eval_script_op(CMD_GET(u8, 2), CMD_GET_S32(4)) != 0) {
         *sStackTop++ = (uintptr_t) NEXT_CMD;
         sCurrentCmd = segmented_to_virtual(CMD_GET(void *, 8));
     } else {
@@ -254,7 +262,7 @@ static void level_cmd_jump_and_link_if(void) {
 }
 
 static void level_cmd_skip_if(void) {
-    if (eval_script_op(CMD_GET(u8, 2), CMD_GET(s32, 4)) == 0) {
+    if (eval_script_op(CMD_GET(u8, 2), CMD_GET_S32(4)) == 0) {
         do {
             sCurrentCmd = CMD_NEXT;
         } while (sCurrentCmd->type == 0x0F || sCurrentCmd->type == 0x10);
@@ -278,14 +286,14 @@ static void level_cmd_skippable_nop(void) {
 static void level_cmd_call(void) {
     typedef s32 (*Func)(s16, s32);
     Func func = CMD_GET(Func, 4);
-    sRegister = func(CMD_GET(s16, 2), sRegister);
+    sRegister = func(CMD_GET_S16(2), sRegister);
     sCurrentCmd = CMD_NEXT;
 }
 
 static void level_cmd_call_loop(void) {
     typedef s32 (*Func)(s16, s32);
     Func func = CMD_GET(Func, 4);
-    sRegister = func(CMD_GET(s16, 2), sRegister);
+    sRegister = func(CMD_GET_S16(2), sRegister);
 
     if (sRegister == 0) {
         sScriptStatus = SCRIPT_PAUSED;
@@ -296,7 +304,7 @@ static void level_cmd_call_loop(void) {
 }
 
 static void level_cmd_set_register(void) {
-    sRegister = CMD_GET(s16, 2);
+    sRegister = CMD_GET_S16(2);
     sCurrentCmd = CMD_NEXT;
 }
 
@@ -314,13 +322,13 @@ static void level_cmd_load_to_fixed_address(void) {
 }
 
 static void level_cmd_load_raw(void) {
-    load_segment(CMD_GET(s16, 2), CMD_GET(void *, 4), CMD_GET(void *, 8),
+    load_segment(CMD_GET_S16(2), CMD_GET(void *, 4), CMD_GET(void *, 8),
             MEMORY_POOL_LEFT);
     sCurrentCmd = CMD_NEXT;
 }
 
 static void level_cmd_load_mio0(void) {
-    load_segment_decompress(CMD_GET(s16, 2), CMD_GET(void *, 4), CMD_GET(void *, 8));
+    load_segment_decompress(CMD_GET_S16(2), CMD_GET(void *, 4), CMD_GET(void *, 8));
     sCurrentCmd = CMD_NEXT;
 }
 
@@ -335,14 +343,14 @@ static void level_cmd_load_mario_head(void) {
         gd_add_to_heap(gZBuffer, sizeof(gZBuffer)); // 0x25800
         gd_add_to_heap(gFrameBuffer0, 3 * sizeof(gFrameBuffer0)); // 0x70800
         gdm_setup();
-        gdm_maketestdl(CMD_GET(s16, 2));
+        gdm_maketestdl(CMD_GET_S16(2));
     }
 
     sCurrentCmd = CMD_NEXT;
 }
 
 static void level_cmd_load_mio0_texture(void) {
-    load_segment_decompress_heap(CMD_GET(s16, 2), CMD_GET(void *, 4), CMD_GET(void *, 8));
+    load_segment_decompress_heap(CMD_GET_S16(2), CMD_GET(void *, 4), CMD_GET(void *, 8));
     sCurrentCmd = CMD_NEXT;
 }
 
@@ -461,8 +469,8 @@ static void level_cmd_end_area(void) {
 }
 
 static void level_cmd_load_model_from_dl(void) {
-    s16 val1 = CMD_GET(s16, 2) & 0x0FFF;
-    s16 val2 = ((u16)CMD_GET(s16, 2)) >> 12;
+    s16 val1 = CMD_GET_S16(2) & 0x0FFF;
+    s16 val2 = ((u16)CMD_GET_S16(2)) >> 12;
     void *val3 = CMD_GET(void *, 4);
 
     u32 id = val1;
@@ -472,7 +480,7 @@ static void level_cmd_load_model_from_dl(void) {
 }
 
 static void level_cmd_load_model_from_geo(void) {
-    s16 arg0 = CMD_GET(s16, 2);
+    s16 arg0 = CMD_GET_S16(2);
     void *arg1 = CMD_GET(void *, 4);
 
     u32 id = arg0;
@@ -487,11 +495,11 @@ static void level_cmd_23(void) {
         f32 f;
     } arg2;
 
-    s16 model = CMD_GET(s16, 2) & 0x0FFF;
-    s16 arg0H = ((u16)CMD_GET(s16, 2)) >> 12;
+    s16 model = CMD_GET_S16(2) & 0x0FFF;
+    s16 arg0H = ((u16)CMD_GET_S16(2)) >> 12;
     void *arg1 = CMD_GET(void *, 4);
     // load an f32, but using an integer load instruction for some reason (hence the union)
-    arg2.i = CMD_GET(s32, 8);
+    arg2.i = CMD_GET_S32(8);
 
     // GraphNodeScale has a GraphNode at the top. This
     // is being stored to the array, so cast the pointer.
@@ -502,7 +510,7 @@ static void level_cmd_23(void) {
 }
 
 static void level_cmd_init_mario(void) {
-    UNUSED u32 behaviorArg = CMD_GET(u32, 4);
+    UNUSED u32 behaviorArg = CMD_GET_U32(4);
     void* behaviorScript = CMD_GET(void*, 8);
     u16 slot = CMD_GET(u8, 3);
     struct GraphNode* unk18 = dynos_model_get_geo(slot);
@@ -539,18 +547,18 @@ static void level_cmd_place_object(void) {
         model = CMD_GET(u8, 3);
         spawnInfo = dynamic_pool_alloc(gLevelPool, sizeof(struct SpawnInfo));
 
-        spawnInfo->startPos[0] = CMD_GET(s16, 4);
-        spawnInfo->startPos[1] = CMD_GET(s16, 6);
-        spawnInfo->startPos[2] = CMD_GET(s16, 8);
+        spawnInfo->startPos[0] = CMD_GET_S16(4);
+        spawnInfo->startPos[1] = CMD_GET_S16(6);
+        spawnInfo->startPos[2] = CMD_GET_S16(8);
 
-        spawnInfo->startAngle[0] = CMD_GET(s16, 10) * 0x8000 / 180;
-        spawnInfo->startAngle[1] = CMD_GET(s16, 12) * 0x8000 / 180;
-        spawnInfo->startAngle[2] = CMD_GET(s16, 14) * 0x8000 / 180;
+        spawnInfo->startAngle[0] = CMD_GET_S16(10) * 0x8000 / 180;
+        spawnInfo->startAngle[1] = CMD_GET_S16(12) * 0x8000 / 180;
+        spawnInfo->startAngle[2] = CMD_GET_S16(14) * 0x8000 / 180;
 
         spawnInfo->areaIndex = sCurrAreaIndex;
         spawnInfo->activeAreaIndex = sCurrAreaIndex;
 
-        spawnInfo->behaviorArg = CMD_GET(u32, 16);
+        spawnInfo->behaviorArg = CMD_GET_U32(16);
         spawnInfo->behaviorScript = CMD_GET(void *, 20);
         spawnInfo->unk18 = dynos_model_get_geo(model);
         spawnInfo->next = gAreas[sCurrAreaIndex].objectSpawnInfos;
@@ -616,9 +624,9 @@ static void level_cmd_create_instant_warp(void) {
         warp->id = 1;
         warp->area = areaIndex;
 
-        warp->displacement[0] = CMD_GET(s16, 4);
-        warp->displacement[1] = CMD_GET(s16, 6);
-        warp->displacement[2] = CMD_GET(s16, 8);
+        warp->displacement[0] = CMD_GET_S16(4);
+        warp->displacement[1] = CMD_GET_S16(6);
+        warp->displacement[2] = CMD_GET_S16(8);
     }
 
     sCurrentCmd = CMD_NEXT;
@@ -626,7 +634,7 @@ static void level_cmd_create_instant_warp(void) {
 
 static void level_cmd_set_terrain_type(void) {
     if (sCurrAreaIndex != -1) {
-        gAreas[sCurrAreaIndex].terrainType |= CMD_GET(s16, 2);
+        gAreas[sCurrAreaIndex].terrainType |= CMD_GET_S16(2);
     }
 
     sCurrentCmd = CMD_NEXT;
@@ -666,11 +674,11 @@ static void level_cmd_3A(void) {
                 dynamic_pool_alloc(gLevelPool, sizeof(struct UnusedArea28));
         }
 
-        val4->unk00 = CMD_GET(s16, 2);
-        val4->unk02 = CMD_GET(s16, 4);
-        val4->unk04 = CMD_GET(s16, 6);
-        val4->unk06 = CMD_GET(s16, 8);
-        val4->unk08 = CMD_GET(s16, 10);
+        val4->unk00 = CMD_GET_S16(2);
+        val4->unk02 = CMD_GET_S16(4);
+        val4->unk04 = CMD_GET_S16(6);
+        val4->unk06 = CMD_GET_S16(8);
+        val4->unk08 = CMD_GET_S16(10);
     }
 
     sCurrentCmd = CMD_NEXT;
@@ -690,8 +698,8 @@ static void level_cmd_create_whirlpool(void) {
                 gAreas[sCurrAreaIndex].whirlpools[index] = whirlpool;
             }
 
-            vec3s_set(whirlpool->pos, CMD_GET(s16, 4), CMD_GET(s16, 6), CMD_GET(s16, 8));
-            whirlpool->strength = CMD_GET(s16, 10);
+            vec3s_set(whirlpool->pos, CMD_GET_S16(4), CMD_GET_S16(6), CMD_GET_S16(8));
+            whirlpool->strength = CMD_GET_S16(10);
         }
     }
 
@@ -765,23 +773,13 @@ static void level_cmd_unload_area(void) {
 
 static void level_cmd_set_mario_start_pos(void) {
     s8 areaIndex = CMD_GET(u8, 2);
-#if IS_64_BIT
-    s16 x = CMD_GET(s16, 6);
-    s16 y = CMD_GET(s16, 8);
-    s16 z = CMD_GET(s16, 10);
-#else
-    Vec3s pos = { 0 };
-    vec3s_copy(pos, CMD_GET(Vec3s, 6));
-#endif
-    s16 angle = CMD_GET(s16, 4);
+    s16 x = CMD_GET_S16(6);
+    s16 y = CMD_GET_S16(8);
+    s16 z = CMD_GET_S16(10);
+    s16 angle = CMD_GET_S16(4);
     for (s32 i = 0; i < MAX_PLAYERS; i++) {
         gPlayerSpawnInfos[i].areaIndex = areaIndex;
-
-#if IS_64_BIT
         vec3s_set(gPlayerSpawnInfos[i].startPos, x, y, z);
-#else
-        vec3s_copy(gPlayerSpawnInfos[i].startPos, pos);
-#endif
         vec3s_set(gPlayerSpawnInfos[i].startAngle, 0, angle * 0x8000 / 180, 0);
     }
     sCurrentCmd = CMD_NEXT;
@@ -819,19 +817,19 @@ static void level_cmd_show_dialog(void) {
 
 static void level_cmd_set_music(void) {
     if (sCurrAreaIndex != -1) {
-        gAreas[sCurrAreaIndex].musicParam = CMD_GET(s16, 2);
-        gAreas[sCurrAreaIndex].musicParam2 = CMD_GET(s16, 4);
+        gAreas[sCurrAreaIndex].musicParam = CMD_GET_S16(2);
+        gAreas[sCurrAreaIndex].musicParam2 = CMD_GET_S16(4);
     }
     sCurrentCmd = CMD_NEXT;
 }
 
 static void level_cmd_set_menu_music(void) {
-    set_background_music(0, CMD_GET(s16, 2), 0);
+    set_background_music(0, CMD_GET_S16(2), 0);
     sCurrentCmd = CMD_NEXT;
 }
 
 static void level_cmd_38(void) {
-    fadeout_music(CMD_GET(s16, 2));
+    fadeout_music(CMD_GET_S16(2));
     sCurrentCmd = CMD_NEXT;
 }
 
@@ -963,7 +961,7 @@ static void level_cmd_place_object_ext_lua_params(void) {
     u16 luaParams = (
         cmdType == 0x3F ? OBJECT_EXT_LUA_BEHAVIOR : (
         cmdType == 0x40 ? OBJECT_EXT_LUA_BEHAVIOR | OBJECT_EXT_LUA_MODEL : (
-        CMD_GET(u16, 2)
+        CMD_GET_U16(2)
     )));
 
     get_lua_param(acts, u8, OBJECT_EXT_LUA_ACTS);
@@ -1020,14 +1018,14 @@ static void level_cmd_place_object_ext_lua_params(void) {
 }
 
 static void level_cmd_load_model_from_geo_ext(void) {
-    s16 modelSlot = CMD_GET(s16, 2);
-    const char* geoName = dynos_level_get_token(CMD_GET(u32, 4));
+    s16 modelSlot = CMD_GET_S16(2);
+    const char* geoName = dynos_level_get_token(CMD_GET_U32(4));
     smlua_model_util_store_in_slot(modelSlot, geoName);
     sCurrentCmd = CMD_NEXT;
 }
 
 static void level_cmd_jump_area_ext(void) {
-    if (eval_script_area(CMD_GET(s32, 4))) {
+    if (eval_script_area(CMD_GET_S32(4))) {
         sCurrentCmd = segmented_to_virtual(CMD_GET(void *, 8));
     } else {
         sCurrentCmd = CMD_NEXT;

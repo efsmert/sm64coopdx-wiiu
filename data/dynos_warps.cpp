@@ -18,6 +18,25 @@ extern u8 sSpawnTypeFromWarpBhv[];
 extern void set_mario_initial_action(struct MarioState *, u32, u32);
 }
 
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+static u32 sDynosWarpWiiULogBudget = 48;
+static void dynos_wiiu_warp_log(const char *fmt, ...) {
+    if (fmt == NULL || sDynosWarpWiiULogBudget == 0) {
+        return;
+    }
+    sDynosWarpWiiULogBudget--;
+    char buffer[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    OSReport("%s", buffer);
+}
+#else
+static void dynos_wiiu_warp_log(const char *fmt, ...) { (void) fmt; }
+#endif
+
 //
 // Data
 //
@@ -58,11 +77,16 @@ bool DynOS_Warp_ToWarpNode(s32 aLevel, s32 aArea, s32 aAct, s32 aWarpId) {
 
 bool DynOS_Warp_ToLevel(s32 aLevel, s32 aArea, s32 aAct) {
     if (!DynOS_Level_GetWarpEntry(aLevel, aArea)) {
+        dynos_wiiu_warp_log("dynos_warp_to_level: reject level=%d area=%d act=%d curr=%d/%d/%d\n",
+                            aLevel, aArea, aAct, gCurrLevelNum, gCurrAreaIndex, gCurrActNum);
         return false;
     }
 
     // stop music
     play_music(SEQ_PLAYER_LEVEL, 0, 0);
+
+    dynos_wiiu_warp_log("dynos_warp_to_level: request level=%d area=%d act=%d curr=%d/%d/%d\n",
+                        aLevel, aArea, aAct, gCurrLevelNum, gCurrAreaIndex, gCurrActNum);
 
     sDynosWarpLevelNum = aLevel;
     sDynosWarpAreaNum  = aArea;
@@ -148,6 +172,9 @@ static void *DynOS_Warp_UpdateWarp(void *aCmd, bool aIsLevelInitDone) {
 
     // Phase 1 - Clear the previous level and set up the new level
     if (sDynosWarpTargetArea == -1) {
+        dynos_wiiu_warp_log("dynos_warp_update: phase1 target=%d/%d/%d from=%d/%d/%d\n",
+                            sDynosWarpLevelNum, sDynosWarpAreaNum, sDynosWarpActNum,
+                            gCurrLevelNum, gCurrAreaIndex, gCurrActNum);
 
         // Close the pause menu if it was open
         level_set_transition(0, NULL);
@@ -265,6 +292,9 @@ static void *DynOS_Warp_UpdateWarp(void *aCmd, bool aIsLevelInitDone) {
 
             // lua hooks
             smlua_call_event_hooks(HOOK_ON_WARP, sBackupWarpDest.type, sDynosWarpLevelNum, sDynosWarpAreaNum, sDynosWarpNodeNum, sBackupWarpDest.arg);
+
+            dynos_wiiu_warp_log("dynos_warp_update: phase3 complete level=%d area=%d act=%d node=%d mario=%p\n",
+                                gCurrLevelNum, gCurrAreaIndex, gCurrActNum, sDynosWarpNodeNum, gMarioObjects[0]);
 
             // Reset values
             sDynosWarpTargetArea = -1;

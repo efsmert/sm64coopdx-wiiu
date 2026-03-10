@@ -212,6 +212,10 @@ void dynos_level_load_background(void *ptr) {
     DynOS_Lvl_LoadBackground(ptr);
 }
 
+bool dynos_level_is_custom_geo_layout_ptr(void *ptr) {
+    return DynOS_Lvl_IsCustomGeoLayoutPtr(ptr);
+}
+
 u64 dynos_level_cmd_get(void *cmd, u64 offset) {
     return DynOS_Level_CmdGet(cmd, offset);
 }

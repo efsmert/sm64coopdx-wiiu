@@ -51,6 +51,9 @@
 #include "game/screen_transition.h"
 
 #include "engine/level_script.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#endif
 
 #define MENU_LEVEL_MIN 0
 #define MENU_LEVEL_MAX 17
@@ -1268,6 +1271,15 @@ void stop_demo(UNUSED struct DjuiBase* caller) {
 int gPressedStart = 0;
 
 s32 play_mode_normal(void) {
+#ifdef TARGET_WII_U
+    static bool sWiiULoggedFirstPlayModeNormal = false;
+    const bool tracePlayModeNormal = !sWiiULoggedFirstPlayModeNormal;
+    if (tracePlayModeNormal) {
+        sWiiULoggedFirstPlayModeNormal = true;
+        OSReport("level_update: play_mode_normal begin area=%p menu=%d demo=%p playMode=%d\n",
+                 (void*)gCurrentArea, (int)gDjuiInMainMenu, (void*)gCurrDemoInput, (int)sCurrPlayMode);
+    }
+#endif
     if (!gDjuiInMainMenu) {
         if (gCurrDemoInput != NULL) {
             print_intro_text();
@@ -1299,7 +1311,17 @@ s32 play_mode_normal(void) {
     }
 
     warp_area();
+#ifdef TARGET_WII_U
+    if (tracePlayModeNormal) {
+        OSReport("level_update: play_mode_normal after warp_area\n");
+    }
+#endif
     check_instant_warp();
+#ifdef TARGET_WII_U
+    if (tracePlayModeNormal) {
+        OSReport("level_update: play_mode_normal after check_instant_warp\n");
+    }
+#endif
 
     if (sTimerRunning) {
         gHudDisplay.timer = gNetworkAreaTimer - gControlTimerStartNat;
@@ -1314,14 +1336,39 @@ s32 play_mode_normal(void) {
     }
 
     area_update_objects();
+#ifdef TARGET_WII_U
+    if (tracePlayModeNormal) {
+        OSReport("level_update: play_mode_normal after area_update_objects\n");
+    }
+#endif
     update_hud_values();
+#ifdef TARGET_WII_U
+    if (tracePlayModeNormal) {
+        OSReport("level_update: play_mode_normal after update_hud_values\n");
+    }
+#endif
 
     if (gCurrentArea != NULL) {
         update_camera(gCurrentArea->camera);
+#ifdef TARGET_WII_U
+        if (tracePlayModeNormal) {
+            OSReport("level_update: play_mode_normal after update_camera\n");
+        }
+#endif
     }
 
     initiate_painting_warp(-1);
+#ifdef TARGET_WII_U
+    if (tracePlayModeNormal) {
+        OSReport("level_update: play_mode_normal after initiate_painting_warp\n");
+    }
+#endif
     initiate_delayed_warp();
+#ifdef TARGET_WII_U
+    if (tracePlayModeNormal) {
+        OSReport("level_update: play_mode_normal after initiate_delayed_warp\n");
+    }
+#endif
 
     // If either initiate_painting_warp or initiate_delayed_warp initiated a
     // warp, change play mode accordingly.
@@ -1348,6 +1395,11 @@ s32 play_mode_normal(void) {
     }
 
 
+#ifdef TARGET_WII_U
+    if (tracePlayModeNormal) {
+        OSReport("level_update: play_mode_normal end\n");
+    }
+#endif
     return 0;
 }
 
@@ -1690,9 +1742,23 @@ void update_menu_level(void) {
 }
 
 s32 update_level(void) {
+#ifdef TARGET_WII_U
+    static bool sWiiULoggedFirstUpdateLevel = false;
+    const bool traceUpdateLevel = !sWiiULoggedFirstUpdateLevel;
+    if (traceUpdateLevel) {
+        sWiiULoggedFirstUpdateLevel = true;
+        OSReport("level_update: update_level begin area=%p playMode=%d menu=%d\n",
+                 (void*)gCurrentArea, (int)sCurrPlayMode, (int)gDjuiInMainMenu);
+    }
+#endif
     // update main menu level
     if (gDjuiInMainMenu) {
         update_menu_level();
+#ifdef TARGET_WII_U
+        if (traceUpdateLevel) {
+            OSReport("level_update: update_level after update_menu_level\n");
+        }
+#endif
     }
     sCancelNextActSelector = gDjuiInMainMenu;
 
@@ -1720,11 +1786,26 @@ s32 update_level(void) {
 
     if (gCurrentArea != NULL) {
         gCurrentArea->localAreaTimer++;
+#ifdef TARGET_WII_U
+        if (traceUpdateLevel) {
+            OSReport("level_update: update_level after localAreaTimer\n");
+        }
+#endif
     }
 
     switch (sCurrPlayMode) {
         case PLAY_MODE_NORMAL:
+#ifdef TARGET_WII_U
+            if (traceUpdateLevel) {
+                OSReport("level_update: update_level before play_mode_normal\n");
+            }
+#endif
             changeLevel = play_mode_normal();
+#ifdef TARGET_WII_U
+            if (traceUpdateLevel) {
+                OSReport("level_update: update_level after play_mode_normal changeLevel=%d\n", (int)changeLevel);
+            }
+#endif
             break;
         case PLAY_MODE_PAUSED:
             if (!network_check_singleplayer_pause()) {
@@ -1751,10 +1832,24 @@ s32 update_level(void) {
         enable_background_sound();
     }
 
+#ifdef TARGET_WII_U
+    if (traceUpdateLevel) {
+        OSReport("level_update: update_level end changeLevel=%d\n", (int)changeLevel);
+    }
+#endif
     return changeLevel;
 }
 
 s32 init_level(void) {
+#ifdef TARGET_WII_U
+    static bool sWiiULoggedFirstInitLevel = false;
+    const bool traceInitLevel = !sWiiULoggedFirstInitLevel;
+    if (traceInitLevel) {
+        sWiiULoggedFirstInitLevel = true;
+        OSReport("level_update: init_level begin warpType=%d areaIndex=%d menu=%d\n",
+                 (int)sWarpDest.type, (int)gPlayerSpawnInfos[0].areaIndex, (int)gDjuiInMainMenu);
+    }
+#endif
     sync_objects_clear();
     geo_clear_interp_data();
     reset_dialog_render_state();
@@ -1796,7 +1891,17 @@ s32 init_level(void) {
     } else {
         if (gPlayerSpawnInfos[0].areaIndex >= 0) {
             load_mario_area();
+#ifdef TARGET_WII_U
+            if (traceInitLevel) {
+                OSReport("level_update: init_level after load_mario_area currentArea=%p\n", (void*)gCurrentArea);
+            }
+#endif
             init_mario();
+#ifdef TARGET_WII_U
+            if (traceInitLevel) {
+                OSReport("level_update: init_level after init_mario action=%x\n", (unsigned)gMarioState->action);
+            }
+#endif
         }
 
         if (gCurrentArea != NULL) {
@@ -1839,9 +1944,17 @@ s32 init_level(void) {
         }
 
         if (val4 != 0) {
+#ifdef TARGET_WII_U
+            gWarpTransition.isActive = FALSE;
+#else
             play_transition(WARP_TRANSITION_FADE_FROM_COLOR, 0x5A, 0xFF, 0xFF, 0xFF);
+#endif
         } else {
+#ifdef TARGET_WII_U
+            gWarpTransition.isActive = FALSE;
+#else
             play_transition(WARP_TRANSITION_FADE_FROM_STAR, 0x10, 0xFF, 0xFF, 0xFF);
+#endif
         }
 
         if (gCurrDemoInput == NULL && gCurrentArea) {
@@ -1874,6 +1987,12 @@ s32 init_level(void) {
         gDelayedInitSound = -1;
     }
 
+#ifdef TARGET_WII_U
+    if (traceInitLevel) {
+        OSReport("level_update: init_level end currentArea=%p action=%x\n",
+                 (void*)gCurrentArea, (unsigned)(gMarioState ? gMarioState->action : 0));
+    }
+#endif
     return 1;
 }
 

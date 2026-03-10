@@ -19,6 +19,7 @@
 #include "pc/mods/mods.h"
 #include "pc/crash_handler.h"
 #include "pc/debuglog.h"
+#include "pc/network/coopnet/coopnet_id.h"
 #include "pc/pc_main.h"
 #include "pc/gfx/gfx_pc.h"
 #include "pc/fs/fmem.h"
@@ -36,6 +37,12 @@
 #include "game/mario.h"
 #include "engine/math_util.h"
 #include "engine/lighting_engine.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define NET_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#else
+#define NET_WIIU_LOG(...)
+#endif
 
 #ifdef DISCORD_SDK
 #include "pc/discord/discord.h"
@@ -106,7 +113,15 @@ void network_set_system(enum NetworkSystemType nsType) {
     }
 }
 
+static bool sNetworkInitInProgress = false;
+
 bool network_init(enum NetworkType inNetworkType, bool reconnecting) {
+    if (sNetworkInitInProgress) {
+        LOG_ERROR("network_init re-entry blocked");
+        return false;
+    }
+    sNetworkInitInProgress = true;
+
     // reset override hide hud
     extern u8 gOverrideHideHud;
     gOverrideHideHud = 0;
@@ -116,6 +131,7 @@ bool network_init(enum NetworkType inNetworkType, bool reconnecting) {
     // sanity check network system
     if (gNetworkSystem == NULL) {
         LOG_ERROR("no network system attached");
+        sNetworkInitInProgress = false;
         return false;
     }
 
@@ -128,6 +144,9 @@ bool network_init(enum NetworkType inNetworkType, bool reconnecting) {
     gServerSettings.playerKnockbackStrength = configPlayerKnockbackStrength;
     gServerSettings.stayInLevelAfterStar = configStayInLevelAfterStar;
     gServerSettings.skipIntro = gCLIOpts.skipIntro ? TRUE : configSkipIntro;
+#ifdef TARGET_WII_U
+    gServerSettings.skipIntro = TRUE;
+#endif
     gServerSettings.bubbleDeath = configBubbleDeath;
     gServerSettings.enablePlayersInLevelDisplay = TRUE;
     gServerSettings.enablePlayerList = TRUE;
@@ -142,12 +161,37 @@ bool network_init(enum NetworkType inNetworkType, bool reconnecting) {
 
     gPauseMenuHidden = false;
 
+    enum NetworkType previousNetworkType = gNetworkType;
+
+    if (inNetworkType == NT_SERVER) {
+        extern s16 gCurrSaveFileNum;
+        gCurrSaveFileNum = configHostSaveSlot;
+
+        // Set server type before Lua init so top-level `network_is_server()`
+        // checks in mods initialize with correct host behavior.
+        gNetworkType = NT_SERVER;
+
+        NET_WIIU_LOG("network: NT_SERVER init begin local mods=%d\n", gLocalMods.entryCount);
+        NET_WIIU_LOG("network: mods_activate begin\n");
+        mods_activate(&gLocalMods);
+        NET_WIIU_LOG("network: mods_activate done\n");
+        NET_WIIU_LOG("network: smlua_init begin\n");
+        smlua_init();
+        NET_WIIU_LOG("network: smlua_init done\n");
+
+        NET_WIIU_LOG("network: dynos_behavior_hook_all_custom_behaviors begin\n");
+        dynos_behavior_hook_all_custom_behaviors();
+        NET_WIIU_LOG("network: dynos_behavior_hook_all_custom_behaviors done\n");
+    }
+
     // initialize the network system
     gNetworkSentJoin = false;
     int rc = gNetworkSystem->initialize(inNetworkType, reconnecting);
     if (!rc && inNetworkType != NT_NONE) {
         LOG_ERROR("failed to initialize network system");
         djui_popup_create(DLANG(NOTIF, DISCONNECT_CLOSED), 2);
+        gNetworkType = previousNetworkType;
+        sNetworkInitInProgress = false;
         return false;
     }
     if (gNetworkServerAddr != NULL) {
@@ -159,13 +203,6 @@ bool network_init(enum NetworkType inNetworkType, bool reconnecting) {
     gNetworkType = inNetworkType;
 
     if (gNetworkType == NT_SERVER) {
-        extern s16 gCurrSaveFileNum;
-        gCurrSaveFileNum = configHostSaveSlot;
-
-        mods_activate(&gLocalMods);
-        smlua_init();
-
-        dynos_behavior_hook_all_custom_behaviors();
 
         network_player_connected(NPT_LOCAL, 0, configPlayerModel, &configPlayerPalette, configPlayerName, get_local_discord_id());
         extern u8* gOverrideEeprom;
@@ -191,6 +228,7 @@ bool network_init(enum NetworkType inNetworkType, bool reconnecting) {
 
     LOG_INFO("initialized");
 
+    sNetworkInitInProgress = false;
     return true;
 }
 
@@ -246,6 +284,22 @@ bool network_allow_unknown_local_index(enum PacketType packetType) {
         || (packetType == PACKET_PONG);
 }
 
+u8 network_get_server_local_index(void) {
+    if (gNetworkPlayerServer != NULL) {
+        return gNetworkPlayerServer->localIndex;
+    }
+#ifdef COOPNET
+    uint64_t hostUserId = (uint64_t)coopnet_raw_get_id(0);
+    if (hostUserId != 0) {
+        u8 hostLocalIndex = coopnet_user_id_to_local_index(hostUserId);
+        if (hostLocalIndex != UNKNOWN_LOCAL_INDEX) {
+            return hostLocalIndex;
+        }
+    }
+#endif
+    return 0;
+}
+
 void network_send_to(u8 localIndex, struct Packet* p) {
     if (p == NULL) {
         LOG_ERROR("no data to send");
@@ -255,7 +309,7 @@ void network_send_to(u8 localIndex, struct Packet* p) {
     // set destination
     if (localIndex == PACKET_DESTINATION_SERVER) {
         packet_set_destination(p, 0);
-        localIndex = (gNetworkPlayerServer != NULL) ? gNetworkPlayerServer->localIndex : 0;
+        localIndex = network_get_server_local_index();
     } else {
         u8 idx = (localIndex == 0) ? p->localIndex : localIndex;
         if (idx >= MAX_PLAYERS) {
@@ -311,7 +365,10 @@ void network_send_to(u8 localIndex, struct Packet* p) {
 
     // save inside packet buffer
     u32 hash = packet_hash(p);
-    memcpy(&p->buffer[p->dataLength], &hash, sizeof(u32));
+    p->buffer[p->dataLength + 0] = (u8)(hash & 0xFF);
+    p->buffer[p->dataLength + 1] = (u8)((hash >> 8) & 0xFF);
+    p->buffer[p->dataLength + 2] = (u8)((hash >> 16) & 0xFF);
+    p->buffer[p->dataLength + 3] = (u8)((hash >> 24) & 0xFF);
 
     // redirect to server if required
     if (localIndex != 0 && gNetworkType != NT_SERVER && gNetworkSystem->requireServerBroadcast && gNetworkPlayerServer != NULL) {
@@ -421,6 +478,8 @@ void network_receive(u8 localIndex, void* addr, u8* data, u16 dataLength) {
         .dataLength = dataLength,
     };
     if (!packet_decompress(&p, data, dataLength)) {
+        NET_WIIU_LOG("coopnet-netrx: decompress_fail localIndex=%u compressed=%u\n",
+                     (unsigned)localIndex, (unsigned)dataLength);
         LOG_ERROR("Failed to decompress!");
         return;
     }
@@ -431,8 +490,21 @@ void network_receive(u8 localIndex, void* addr, u8* data, u16 dataLength) {
 
     // subtract and check hash
     if (!packet_check_hash(&p)) {
+        NET_WIIU_LOG("coopnet-netrx: hash_fail localIndex=%u type=%u decomp=%u\n",
+                     (unsigned)localIndex, (unsigned)p.buffer[0], (unsigned)p.dataLength);
         LOG_ERROR("invalid packet hash!");
         return;
+    }
+
+    if (gNetworkSystem == &gNetworkSystemCoopNet) {
+        u8 pt = p.buffer[0];
+        if (pt == PACKET_MOD_LIST
+            || pt == PACKET_MOD_LIST_DONE
+            || pt == PACKET_JOIN_REQUEST
+            || pt == PACKET_JOIN) {
+            NET_WIIU_LOG("coopnet-netrx: ok localIndex=%u packetType=%u decomp=%u\n",
+                         (unsigned)localIndex, (unsigned)pt, (unsigned)p.dataLength);
+        }
     }
 
     network_remember_debug_packet(p.buffer[0], false);

@@ -53,6 +53,7 @@
 #include "pc/debuglog.h"
 #include "pc/utils/misc.h"
 #include "pc/mods/mods.h"
+#include "pc/wiiu_network.h"
 
 #include "debug_context.h"
 #include "menu/intro_geo.h"
@@ -66,7 +67,9 @@
 #include "pc/discord/discord.h"
 #endif
 
+#ifndef TARGET_WII_U
 #include "pc/mumble/mumble.h"
+#endif
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
@@ -74,6 +77,12 @@
 
 #ifdef HAVE_SDL2
 #include <SDL2/SDL.h>
+#endif
+
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#include <whb/sdcard.h>
+#include <whb/log.h>
 #endif
 
 extern Vp gViewportFullscreen;
@@ -117,6 +126,45 @@ extern void gfx_run(Gfx *commands);
 extern void thread5_game_loop(void *arg);
 extern void create_next_audio_buffer(s16 *samples, u32 num_samples);
 void game_loop_one_iteration(void);
+
+#ifdef TARGET_WII_U
+static bool wiiu_mkdirs(const char *path) {
+    char buf[SYS_MAX_PATH];
+    size_t len = 0;
+
+    if (path == NULL || path[0] == '\0') { return false; }
+    if (fs_sys_dir_exists(path)) { return true; }
+
+    strncpy(buf, path, sizeof(buf));
+    buf[sizeof(buf) - 1] = '\0';
+    len = strlen(buf);
+    while (len > 1 && buf[len - 1] == '/') {
+        buf[len - 1] = '\0';
+        len--;
+    }
+
+    for (size_t i = 1; i < len; i++) {
+        if (buf[i] != '/') { continue; }
+        buf[i] = '\0';
+        if (!fs_sys_dir_exists(buf)) {
+            fs_sys_mkdir(buf);
+        }
+        buf[i] = '/';
+    }
+
+    if (!fs_sys_dir_exists(buf)) {
+        fs_sys_mkdir(buf);
+    }
+    return fs_sys_dir_exists(buf);
+}
+
+static void wiiu_prepare_sd_storage(void) {
+    WHBMountSdCard();
+    wiiu_mkdirs("/vol/external01/wiiu/apps/sm64coopdx");
+    wiiu_mkdirs("/vol/external01/wiiu/apps/sm64coopdx/roms");
+    wiiu_mkdirs("/vol/external01/wiiu/apps/sm64coopdx/mods");
+}
+#endif
 
 void dispatch_audio_sptask(UNUSED struct SPTask *spTask) {}
 void set_vblank_handler(UNUSED s32 index, UNUSED struct VblankHandler *handler, UNUSED OSMesgQueue *queue, UNUSED OSMesg *msg) {}
@@ -261,7 +309,11 @@ void produce_interpolation_frames_and_delay(void) {
         gfx_start_frame();
         if (!gSkipInterpolationTitleScreen) { patch_interpolations(delta); }
         send_display_list(gGfxSPTask);
+#ifdef TARGET_WII_U
+        gfx_end_frame();
+#else
         gfx_end_frame_render();
+#endif
 
         // delay if our framerate is capped
         if (shouldDelay) {
@@ -275,7 +327,9 @@ void produce_interpolation_frames_and_delay(void) {
         }
 
         // send the frame to the screen (should be directly after the delay for good frame pacing)
+#ifndef TARGET_WII_U
         gfx_display_frame();
+#endif
         sDrawnFrames++;
         if (shouldDelay) { numFramesToDraw--; }
     } while ((curTime = clock_elapsed_f64()) < targetTime && numFramesToDraw > 0);
@@ -297,10 +351,18 @@ void produce_interpolation_frames_and_delay(void) {
 
 // It's just better to have this off the stack, Because the size isn't small.
 // It also may help static analysis and bug catching.
-static s16 sAudioBuffer[SAMPLES_HIGH * 2 * 2] = { 0 };
+enum { AUDIO_BATCH_MIN = 2 };
+#ifdef TARGET_WII_U
+enum { AUDIO_BATCH_MAX = 4 };
+#else
+enum { AUDIO_BATCH_MAX = 2 };
+#endif
+
+static s16 sAudioBuffer[SAMPLES_HIGH * 2 * AUDIO_BATCH_MAX] = { 0 };
 
 inline static void buffer_audio(void) {
-    bool shouldMute = (configMuteFocusLoss && !WAPI.has_focus()) || (gMasterVolume == 0);
+    gMasterVolume = ((f32)configMasterVolume / 127.0f) * ((f32)gLuaVolumeMaster / 127.0f);
+    bool shouldMute = (configMuteFocusLoss && !WAPI.has_focus()) || (gMasterVolume <= 0.0f);
     if (!shouldMute) {
         set_sequence_player_volume(SEQ_PLAYER_LEVEL, (f32)configMusicVolume / 127.0f * (f32)gLuaVolumeLevel / 127.0f);
         set_sequence_player_volume(SEQ_PLAYER_SFX,   (f32)configSfxVolume / 127.0f * (f32)gLuaVolumeSfx / 127.0f);
@@ -308,31 +370,53 @@ inline static void buffer_audio(void) {
     }
 
     int samplesLeft = audio_api->buffered();
-    u32 numAudioSamples = samplesLeft < audio_api->get_desired_buffered() ? SAMPLES_HIGH : SAMPLES_LOW;
-    for (s32 i = 0; i < 2; i++) {
+    int desiredBuffered = audio_api->get_desired_buffered();
+    u32 numAudioSamples = samplesLeft < desiredBuffered ? SAMPLES_HIGH : SAMPLES_LOW;
+    u32 audioBatches = AUDIO_BATCH_MIN;
+#ifdef TARGET_WII_U
+    // Never advance synth state for audio that won't be queued.
+    if (samplesLeft >= 5200) {
+        return;
+    }
+
+    // Size production by actual queue deficit to avoid oscillation/overrun.
+    int deficit = desiredBuffered - samplesLeft;
+    if (deficit > 0) {
+        int needed = (deficit + (int)SAMPLES_LOW - 1) / (int)SAMPLES_LOW;
+        if (needed < (int)AUDIO_BATCH_MIN) { needed = AUDIO_BATCH_MIN; }
+        if (needed > (int)AUDIO_BATCH_MAX) { needed = AUDIO_BATCH_MAX; }
+        audioBatches = (u32)needed;
+    }
+#endif
+
+    for (u32 i = 0; i < audioBatches; i++) {
         create_next_audio_buffer(sAudioBuffer + i * (numAudioSamples * 2), numAudioSamples);
     }
 
     if (!shouldMute) {
-        for (u16 i=0; i < ARRAY_COUNT(sAudioBuffer); i++) {
-            sAudioBuffer[i] *= gMasterVolume;
+        // Apply master gain only to the active mixed sample span.
+        const u32 mixedSamples = 2 * audioBatches * numAudioSamples;
+        for (u32 i = 0; i < mixedSamples; i++) {
+            sAudioBuffer[i] = (s16)((f32)sAudioBuffer[i] * gMasterVolume);
         }
-        audio_api->play((u8 *)sAudioBuffer, 2 * numAudioSamples * 4);
+        audio_api->play((u8 *)sAudioBuffer, audioBatches * numAudioSamples * 4);
     }
 }
 
 void *audio_thread(UNUSED void *arg) {
     // As long as we have an audio api and that we're threaded, Loop.
     while (audio_api) {
-        f64 curTime = clock_elapsed_f64();
-
         // Buffer the audio.
         lock_mutex(&gAudioThread);
         buffer_audio();
         unlock_mutex(&gAudioThread);
 
+        // Queue-driven on Wii U: poll frequently and top up only when needed.
+#ifdef TARGET_WII_U
+        WAPI.delay(4);
+#else
         // Delay till the next frame for smooth audio at the correct speed.
-        // delay
+        f64 curTime = clock_elapsed_f64();
         f64 targetDelta = 1.0 / (f64)FRAMERATE;
         f64 now = clock_elapsed_f64();
         f64 actualDelta = now - curTime;
@@ -340,6 +424,7 @@ void *audio_thread(UNUSED void *arg) {
             f64 delay = ((targetDelta - actualDelta) * 1000.0);
             WAPI.delay((u32)delay);
         }
+#endif
     }
 
     // Exit the thread if our loop breaks.
@@ -349,20 +434,56 @@ void *audio_thread(UNUSED void *arg) {
 }
 
 void produce_one_frame(void) {
+#ifdef TARGET_WII_U
+    static bool sLoggedFirstProduceOneFrame = false;
+    const bool traceFirstFrame = !sLoggedFirstProduceOneFrame;
+    if (!sLoggedFirstProduceOneFrame) {
+        sLoggedFirstProduceOneFrame = true;
+        OSReport("pc_main: first produce_one_frame\n");
+    }
+    if (traceFirstFrame) { OSReport("pc_main: frame stage network_update begin\n"); }
+#endif
     CTX_EXTENT(CTX_NETWORK, network_update);
+#ifdef TARGET_WII_U
+    if (traceFirstFrame) { OSReport("pc_main: frame stage network_update end\n"); }
+    if (traceFirstFrame) { OSReport("pc_main: frame stage patch_interpolations_before begin\n"); }
+#endif
 
     CTX_EXTENT(CTX_INTERP, patch_interpolations_before);
+#ifdef TARGET_WII_U
+    if (traceFirstFrame) { OSReport("pc_main: frame stage patch_interpolations_before end\n"); }
+    if (traceFirstFrame) { OSReport("pc_main: frame stage game_loop_one_iteration begin\n"); }
+#endif
 
     CTX_EXTENT(CTX_GAME_LOOP, game_loop_one_iteration);
+#ifdef TARGET_WII_U
+    if (traceFirstFrame) { OSReport("pc_main: frame stage game_loop_one_iteration end\n"); }
+    if (traceFirstFrame) { OSReport("pc_main: frame stage smlua_update begin\n"); }
+#endif
 
     CTX_EXTENT(CTX_SMLUA, smlua_update);
+#ifdef TARGET_WII_U
+    if (traceFirstFrame) { OSReport("pc_main: frame stage smlua_update end\n"); }
+#endif
 
     // If we aren't threaded
     if (gAudioThread.state == INVALID) {
+#ifdef TARGET_WII_U
+        if (traceFirstFrame) { OSReport("pc_main: frame stage buffer_audio begin\n"); }
+#endif
         CTX_EXTENT(CTX_AUDIO, buffer_audio);
+#ifdef TARGET_WII_U
+        if (traceFirstFrame) { OSReport("pc_main: frame stage buffer_audio end\n"); }
+#endif
     }
 
+#ifdef TARGET_WII_U
+    if (traceFirstFrame) { OSReport("pc_main: frame stage produce_interpolation_frames_and_delay begin\n"); }
+#endif
     CTX_EXTENT(CTX_RENDER, produce_interpolation_frames_and_delay);
+#ifdef TARGET_WII_U
+    if (traceFirstFrame) { OSReport("pc_main: frame stage produce_interpolation_frames_and_delay end\n"); }
+#endif
 }
 
 // used for rendering 2D scenes fullscreen like the loading or crash screens
@@ -411,9 +532,20 @@ void produce_one_dummy_frame(void (*callback)(), u8 clearColorR, u8 clearColorG,
 }
 
 void audio_shutdown(void) {
+    struct AudioAPI *api = audio_api;
+
+    // Stop and join the producer thread first so the backend can't be
+    // torn down while it is still queuing audio.
+    if (gAudioThread.state == RUNNING) {
+        audio_api = NULL;
+        join_thread(&gAudioThread);
+        destroy_mutex(&gAudioThread);
+        gAudioThread.state = INVALID;
+    }
+
     audio_custom_shutdown();
-    if (audio_api) {
-        if (audio_api->shutdown) audio_api->shutdown();
+    if (api) {
+        if (api->shutdown) { api->shutdown(); }
         audio_api = NULL;
     }
 }
@@ -424,6 +556,9 @@ void game_deinit(void) {
     audio_custom_shutdown();
     audio_shutdown();
     network_shutdown(true, true, false, false);
+#ifdef TARGET_WII_U
+    wiiu_network_shutdown();
+#endif
     smlua_text_utils_shutdown();
     smlua_shutdown();
     smlua_audio_custom_deinit();
@@ -455,20 +590,37 @@ void* main_game_init(UNUSED void* dummy) {
     LOADING_SCREEN_MUTEX(loading_screen_set_segment_text("Loading ROM Assets"));
     rom_assets_load();
     smlua_text_utils_init();
-
     mods_init();
     enable_queued_mods();
+#ifndef TARGET_WII_U
     LOADING_SCREEN_MUTEX(
         gCurrLoadingSegment.percentage = 0;
         loading_screen_set_segment_text("Starting Game");
     );
+#else
+    LOADING_SCREEN_MUTEX(loading_screen_set_segment_text("Preparing Runtime"));
+#endif
 
     audio_init();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after audio_init\n");
+#endif
     sound_init();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after sound_init\n");
+#endif
     network_player_init();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after network_player_init\n");
+#endif
+#ifndef TARGET_WII_U
     mumble_init();
+#endif
 
     gGameInited = true;
+#ifdef TARGET_WII_U
+    OSReport("pc_main: main_game_init complete\n");
+#endif
     return NULL;
 }
 
@@ -499,7 +651,14 @@ int main(int argc, char *argv[]) {
         fs_init(sys_user_path());
     }
 #else
+#ifdef TARGET_WII_U
+    wiiu_prepare_sd_storage();
+#endif
     fs_init(gCLIOpts.savePath[0] ? gCLIOpts.savePath : sys_user_path());
+#endif
+
+#ifdef TARGET_WII_U
+    wiiu_network_init();
 #endif
 
 #if !defined(RAPI_DUMMY) && !defined(WAPI_DUMMY)
@@ -522,7 +681,11 @@ int main(int argc, char *argv[]) {
     }
 
     // render the rom setup screen
-    if (!main_rom_handler()) {
+    bool rom_ready = main_rom_handler();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: main_rom_handler=%d\n", rom_ready ? 1 : 0);
+#endif
+    if (!rom_ready) {
 #ifdef LOADING_SCREEN_SUPPORTED
         if (!gCLIOpts.hideLoadingScreen) {
             render_rom_setup_screen(); // holds the game load until a valid rom is provided
@@ -537,8 +700,18 @@ int main(int argc, char *argv[]) {
     // start the thread for setting up the game
 #ifdef LOADING_SCREEN_SUPPORTED
     bool threadSuccess = false;
+    bool usedLoadingScreen = false;
+#ifdef TARGET_WII_U
+    // Keep Wii U boot on the main thread for now. The loading-screen thread
+    // path is desktop-oriented and has been leaving the port presenting a
+    // frame while game init silently stalls in the background.
+    const bool allowAsyncLoadingThread = false;
+#else
+    const bool allowAsyncLoadingThread = true;
+#endif
     if (!gCLIOpts.hideLoadingScreen && !gCLIOpts.headless) {
-        if (init_thread_handle(&gLoadingThread, main_game_init, NULL, NULL, 0) == 0) {
+        if (allowAsyncLoadingThread && init_thread_handle(&gLoadingThread, main_game_init, NULL, NULL, 0) == 0) {
+            usedLoadingScreen = true;
             render_loading_screen(); // render the loading screen while the game is setup
             threadSuccess = true;
             destroy_mutex(&gLoadingThread);
@@ -547,11 +720,20 @@ int main(int argc, char *argv[]) {
     if (!threadSuccess)
 #endif
     {
+#ifdef TARGET_WII_U
+        OSReport("pc_main: entering main_game_init (single-thread fallback)\n");
+#endif
         main_game_init(NULL); // failsafe incase threading doesn't work
     }
 
     // initialize sm64 data and controllers
+#ifdef TARGET_WII_U
+    OSReport("pc_main: before thread5_game_loop\n");
+#endif
     thread5_game_loop(NULL);
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after thread5_game_loop\n");
+#endif
 
     // initialize sound outside threads
     if (gCLIOpts.headless) audio_api = &audio_null;
@@ -559,21 +741,64 @@ int main(int argc, char *argv[]) {
     if (!audio_api && audio_sdl.init()) audio_api = &audio_sdl;
 #endif
     if (!audio_api) audio_api = &audio_null;
+#ifdef TARGET_WII_U
+    WHBLogPrintf("audio: backend=%s",
+                 (audio_api == &audio_null) ? "null" : "sdl");
+    OSReport("audio: backend=%s\n",
+             (audio_api == &audio_null) ? "null" : "sdl");
+#endif
 
-    // Initialize the audio thread if possible.
-    // init_thread_handle(&gAudioThread, audio_thread, NULL, NULL, 0);
+    // Initialize the audio thread if possible. Falling back to frame-threaded
+    // audio is functional but prone to underruns when rendering stalls.
+    if (audio_api != &audio_null) {
+#ifdef TARGET_WII_U
+        // Keep Wii U on frame-threaded audio for now. The pthread shim/newlib
+        // interaction can destabilize large Lua allocations during host/mod init.
+        gAudioThread.state = INVALID;
+        OSReport("audio: forcing frame-threaded fallback on Wii U\n");
+#else
+        if (init_thread_handle(&gAudioThread, audio_thread, NULL, NULL, 0) != 0) {
+            destroy_mutex(&gAudioThread);
+            gAudioThread.state = INVALID;
+        }
+#endif
+    }
 
 #ifdef LOADING_SCREEN_SUPPORTED
+#ifdef TARGET_WII_U
+    if (usedLoadingScreen) {
+        loading_screen_reset();
+        OSReport("pc_main: after loading_screen_reset\n");
+    } else {
+        OSReport("pc_main: skipping loading_screen_reset (loading screen unused)\n");
+    }
+#else
     loading_screen_reset();
+#endif
 #endif
 
     // initialize djui
     djui_init();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after djui_init\n");
+#endif
     djui_unicode_init();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after djui_unicode_init\n");
+#endif
     djui_init_late();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after djui_init_late\n");
+#endif
     djui_console_message_dequeue();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after djui_console_message_dequeue\n");
+#endif
 
     show_update_popup();
+#ifdef TARGET_WII_U
+    OSReport("pc_main: after show_update_popup\n");
+#endif
 
     // initialize network
     if (gCLIOpts.network == NT_CLIENT) {
@@ -582,6 +807,9 @@ int main(int argc, char *argv[]) {
         snprintf(configJoinIp, MAX_CONFIG_STRING, "%s", gCLIOpts.joinIp);
         configJoinPort = gCLIOpts.networkPort;
         network_init(NT_CLIENT, false);
+#ifdef TARGET_WII_U
+        OSReport("pc_main: after network_init client\n");
+#endif
     } else if (gCLIOpts.network == NT_SERVER || gCLIOpts.coopnet) {
         if (gCLIOpts.network == NT_SERVER) {
             configNetworkSystem = NS_SOCKET;
@@ -598,19 +826,34 @@ int main(int argc, char *argv[]) {
 
         extern void djui_panel_do_host(bool reconnecting, bool playSound);
         djui_panel_do_host(NULL, false);
+#ifdef TARGET_WII_U
+        OSReport("pc_main: after djui_panel_do_host\n");
+#endif
     } else {
         network_init(NT_NONE, false);
+#ifdef TARGET_WII_U
+        OSReport("pc_main: after network_init none\n");
+#endif
     }
 
     // main loop
     while (true) {
+#ifdef TARGET_WII_U
+        static bool sLoggedMainLoopEntry = false;
+        if (!sLoggedMainLoopEntry) {
+            sLoggedMainLoopEntry = true;
+            OSReport("pc_main: entering main loop\n");
+        }
+#endif
         debug_context_reset();
         CTX_BEGIN(CTX_TOTAL);
         WAPI.main_loop(produce_one_frame);
 #ifdef DISCORD_SDK
         discord_update();
 #endif
+#ifndef TARGET_WII_U
         mumble_update();
+#endif
 #ifdef DEBUG
         fflush(stdout);
         fflush(stderr);

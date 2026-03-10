@@ -249,16 +249,16 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(struct ColorC
     struct CCFeatures ccf = { 0 };
     gfx_cc_get_features(cc, &ccf);
 
-    bool opt_alpha = cc->cm.use_alpha;
-    bool opt_fog = cc->cm.use_fog;
-    bool opt_texture_edge = cc->cm.texture_edge;
-    bool opt_2cycle = cc->cm.use_2cycle;
-    bool opt_light_map = cc->cm.light_map;
+    bool opt_alpha = gfx_cm_has(&cc->cm, CM_FLAG_USE_ALPHA);
+    bool opt_fog = gfx_cm_has(&cc->cm, CM_FLAG_USE_FOG);
+    bool opt_texture_edge = gfx_cm_has(&cc->cm, CM_FLAG_TEXTURE_EDGE);
+    bool opt_2cycle = gfx_cm_has(&cc->cm, CM_FLAG_USE_2CYCLE);
+    bool opt_light_map = gfx_cm_has(&cc->cm, CM_FLAG_LIGHT_MAP);
 
 #ifdef USE_GLES
     bool opt_dither = false;
 #else
-    bool opt_dither = cc->cm.use_dither;
+    bool opt_dither = gfx_cm_has(&cc->cm, CM_FLAG_USE_DITHER);
 #endif
 
     char vs_buf[1024];

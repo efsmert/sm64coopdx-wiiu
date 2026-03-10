@@ -10,6 +10,23 @@
 //#define DISABLE_MODULE_LOG 1
 #include "pc/debuglog.h"
 #include "pc/fs/fmem.h"
+#include "pc/network/coopnet/coopnet_id.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#include <stdarg.h>
+#include <stdio.h>
+#define DOWNLOAD_WIIU_LOG_BUFSZ 256
+static void download_wiiu_logf(const char* fmt, ...) {
+    char buffer[DOWNLOAD_WIIU_LOG_BUFSZ];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    OSReport("%s", buffer);
+}
+#else
+static void download_wiiu_logf(UNUSED const char* fmt, ...) { }
+#endif
 
 #define CHUNK_SIZE 800
 #define OFFSET_COUNT 50
@@ -28,10 +45,35 @@ static u64 sOffsetGroupCount = 0;
 static u64 sTotalDownloadBytes = 0;
 static f32 sDownloadStartTime = 0;
 static u64 sDownloadReceivedBytes = 0;
+static u8 sDownloadReplyLocalIndex = 0;
+
+static bool download_sender_valid(u8 localIndex) {
+    if (localIndex == UNKNOWN_LOCAL_INDEX) {
+        return true;
+    }
+
+    if (gNetworkPlayerServer != NULL) {
+        return gNetworkPlayerServer->localIndex == localIndex;
+    }
+
+#ifdef COOPNET
+    uint64_t hostUserId = (uint64_t)coopnet_raw_get_id(0);
+    if (hostUserId != 0) {
+        u8 hostLocalIndex = coopnet_user_id_to_local_index(hostUserId);
+        if (hostLocalIndex != UNKNOWN_LOCAL_INDEX) {
+            return hostLocalIndex == localIndex;
+        }
+    }
+#endif
+
+    return false;
+}
 
 static bool network_start_offset_group(struct OffsetGroup* og);
 static void network_update_offset_groups(void);
 static void mark_groups_loaded_from_hash(void);
+static bool network_all_offset_groups_completed(void);
+static void network_finalize_download(void);
 
 void network_start_download_requests(void) {
     sTotalDownloadBytes = 0;
@@ -52,6 +94,13 @@ void network_start_download_requests(void) {
     memset(&sOffsetGroup[1], 0, sizeof(struct OffsetGroup));
 
     mark_groups_loaded_from_hash();
+    download_wiiu_logf("coopnet-download: start totalBytes=%llu groups=%llu\n",
+                       (unsigned long long)gRemoteMods.size,
+                       (unsigned long long)sOffsetGroupCount);
+    if (network_all_offset_groups_completed()) {
+        network_finalize_download();
+        return;
+    }
     network_update_offset_groups();
 }
 
@@ -73,9 +122,14 @@ static void mark_groups_loaded_from_hash(void) {
                 sTotalDownloadBytes += file->size;
                 LOG_INFO("Loaded from cache: %s, %llu", file->cachedPath, (u64)file->size);
             } else {
+                if (file->size == 0) {
+                    fileStartOffset += file->size;
+                    continue;
+                }
                 // if we haven't loaded from cache, we need this offset group
                 u64 ogIndexStart = fileStartOffset / GROUP_SIZE;
-                u64 ogIndexEnd = (fileStartOffset + mod->size) / GROUP_SIZE;
+                u64 fileEndOffset = fileStartOffset + (file->size - 1);
+                u64 ogIndexEnd = fileEndOffset / GROUP_SIZE;
                 do {
                     if (ogIndexStart < sOffsetGroupCount) {
                         LOG_INFO("Marking group as required: %llu (%s)", ogIndexStart, file->relativePath);
@@ -186,20 +240,7 @@ static void network_update_offset_groups(void) {
     }
 
     if (completedDownload) {
-        // close and flush all file pointers
-        for (u64 modIndex = 0; modIndex < gRemoteMods.entryCount; modIndex++) {
-            struct Mod* mod = gRemoteMods.entries[modIndex];
-            for (u64 fileIndex = 0; fileIndex < mod->fileCount; fileIndex++) {
-                struct ModFile* modFile = &mod->files[fileIndex];
-                if (modFile->fp == NULL) { continue; }
-                f_flush(modFile->fp);
-                f_close(modFile->fp);
-                modFile->fp = NULL;
-            }
-            mod->enabled = true;
-        }
-        LOG_INFO("Download complete!");
-        network_send_join_request();
+        network_finalize_download();
         return;
     }
 
@@ -214,6 +255,36 @@ static void network_update_offset_groups(void) {
     }
 }
 
+static bool network_all_offset_groups_completed(void) {
+    for (u64 i = 0; i < sOffsetGroupCount; i++) {
+        if (!sOffsetGroupsCompleted[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void network_finalize_download(void) {
+    // close and flush all file pointers
+    for (u64 modIndex = 0; modIndex < gRemoteMods.entryCount; modIndex++) {
+        struct Mod* mod = gRemoteMods.entries[modIndex];
+        for (u64 fileIndex = 0; fileIndex < mod->fileCount; fileIndex++) {
+            struct ModFile* modFile = &mod->files[fileIndex];
+            if (modFile->fp == NULL) { continue; }
+            f_flush(modFile->fp);
+            f_close(modFile->fp);
+            modFile->fp = NULL;
+        }
+        mod->enabled = true;
+    }
+
+    LOG_INFO("Download complete!");
+    download_wiiu_logf("coopnet-download: complete receivedBytes=%llu totalBytes=%llu\n",
+                       (unsigned long long)sDownloadReceivedBytes,
+                       (unsigned long long)gRemoteMods.size);
+    network_send_join_request();
+}
+
 void network_send_download_request(u64 offset) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
 
@@ -221,7 +292,7 @@ void network_send_download_request(u64 offset) {
     packet_init(&p, PACKET_DOWNLOAD_REQUEST, true, PLMT_NONE);
     packet_write(&p, &offset, sizeof(u64));
 
-    network_send_to((gNetworkPlayerServer != NULL) ? gNetworkPlayerServer->localIndex : 0, &p);
+    network_send_to(network_get_server_local_index(), &p);
 
     LOG_INFO("Requesting group: %llu [ %llu <---> %llu ]", (offset / GROUP_SIZE), offset, offset + GROUP_SIZE);
 }
@@ -229,9 +300,21 @@ void network_send_download_request(u64 offset) {
 void network_receive_download_request(struct Packet* p) {
     SOFT_ASSERT(gNetworkType == NT_SERVER);
 
+#ifdef COOPNET
+    if (p->localIndex == UNKNOWN_LOCAL_INDEX && p->addr != NULL) {
+        uint64_t userId = 0;
+        memcpy(&userId, p->addr, sizeof(userId));
+        u8 reserved = coopnet_reserve_user_id(userId);
+        if (reserved != UNKNOWN_LOCAL_INDEX) {
+            p->localIndex = reserved;
+        }
+    }
+#endif
+
     // receive requested offset
     u64 requestOffset;
     packet_read(p, &requestOffset, sizeof(u64));
+    sDownloadReplyLocalIndex = (p->localIndex == UNKNOWN_LOCAL_INDEX) ? 0 : p->localIndex;
 
     for (u64 i = 0; i < OFFSET_COUNT; i++) {
         u64 sendOffset = requestOffset + (i * CHUNK_SIZE);
@@ -311,7 +394,7 @@ after_filled:;
     packet_write(&p, &requestOffset, sizeof(u64));
     packet_write(&p, &chunkFill,    sizeof(u64));
     packet_write(&p, &chunk,        sizeof(u8) * chunkFill);
-    network_send_to(0, &p);
+    network_send_to(sDownloadReplyLocalIndex, &p);
 
     //LOG_INFO("Sent chunk: offset %llu, length %llu", requestOffset, chunkFill);
 }
@@ -360,11 +443,9 @@ void network_receive_download(struct Packet* p) {
     }
 
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
-    if (p->localIndex != UNKNOWN_LOCAL_INDEX) {
-        if (gNetworkPlayerServer == NULL || gNetworkPlayerServer->localIndex != p->localIndex) {
-            LOG_ERROR("Received download from known local index '%d'", p->localIndex);
-            return;
-        }
+    if (!download_sender_valid(p->localIndex)) {
+        LOG_ERROR("Received download from invalid local index '%d'", p->localIndex);
+        return;
     }
 
     // read the chunk

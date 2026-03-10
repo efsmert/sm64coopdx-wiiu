@@ -786,7 +786,11 @@ NEXT_OPTION:
 
     if (configPlayerModel >= CT_MAX) { configPlayerModel = 0; }
 
-    if (configDjuiTheme >= DJUI_THEME_MAX) { configDjuiTheme = 0; }
+    if (configDjuiTheme >= DJUI_THEME_MAX) { configDjuiTheme = DJUI_THEME_DARK; }
+#ifdef TARGET_WII_U
+    // Keep Wii U visuals aligned with donor while GX2 UI rendering is being stabilized.
+    if (configDjuiTheme == DJUI_THEME_LIGHT) { configDjuiTheme = DJUI_THEME_DARK; }
+#endif
     if (configDjuiScale >= 5) { configDjuiScale = 0; }
 
     if (gCLIOpts.fullscreen == 1) {

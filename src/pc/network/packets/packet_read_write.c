@@ -12,6 +12,42 @@ static bool sOrderedPackets = false;
 static u16 sCurrentOrderedGroupId = 0;
 static u16 sCurrentOrderedSeqId = 0;
 
+#ifdef TARGET_WII_U
+static bool packet_needs_scalar_swap(u16 length) {
+    return length == sizeof(u16) || length == sizeof(u32) || length == sizeof(u64);
+}
+
+static void packet_copy_bytes_reversed(void* dst, const void* src, u16 length) {
+    const u8* s = (const u8*)src;
+    u8* d = (u8*)dst;
+    for (u16 i = 0; i < length; i++) {
+        d[i] = s[length - 1 - i];
+    }
+}
+
+static void packet_store_u16_le(u8* dst, u16 value) {
+    dst[0] = (u8)(value & 0xFF);
+    dst[1] = (u8)((value >> 8) & 0xFF);
+}
+
+static u32 packet_load_u32_le(const u8* src) {
+    return (u32)src[0]
+        | ((u32)src[1] << 8)
+        | ((u32)src[2] << 16)
+        | ((u32)src[3] << 24);
+}
+#else
+static void packet_store_u16_le(u8* dst, u16 value) {
+    memcpy(dst, &value, sizeof(u16));
+}
+
+static u32 packet_load_u32_le(const u8* src) {
+    u32 value = 0;
+    memcpy(&value, src, sizeof(u32));
+    return value;
+}
+#endif
+
 void packet_init(struct Packet* packet, enum PacketType packetType, bool reliable, enum PacketLevelMatchType levelAreaMustMatch) {
     memset(packet->buffer, 0, PACKET_LENGTH);
     packet->packetType = packetType;
@@ -29,7 +65,9 @@ void packet_init(struct Packet* packet, enum PacketType packetType, bool reliabl
     packet->orderedSeqId        = 0;
     packet->keepSendingAfterDisconnect = false;
 
-    packet_write(packet, &packetType, sizeof(u8));
+    // Enum storage is host-endian sized as int; always serialize packet type as a true u8.
+    u8 packetTypeByte = (u8)packetType;
+    packet_write(packet, &packetTypeByte, sizeof(u8));
 
     // write seq number
     if (reliable) {
@@ -110,7 +148,7 @@ void packet_duplicate(struct Packet* srcPacket, struct Packet* dstPacket) {
     } else {
         dstPacket->seqId = 0;
     }
-    memcpy(&dstPacket->buffer[1], &dstPacket->seqId, 2);
+    packet_store_u16_le(&dstPacket->buffer[1], dstPacket->seqId);
 
     dstPacket->dataLength = srcPacket->dataLength;
     dstPacket->cursor = dstPacket->dataLength;
@@ -139,7 +177,17 @@ void packet_write(struct Packet* packet, void* data, u16 length) {
         SOFT_ASSERT(packet->cursor + length < PACKET_LENGTH);
         packet->writeError = true;
     }
-    memcpy(&packet->buffer[packet->cursor], data, length);
+    u8* dst = &packet->buffer[packet->cursor];
+#ifdef TARGET_WII_U
+    // CoopDX network wire format is little-endian; swap primitive scalars on big-endian Wii U.
+    if (packet_needs_scalar_swap(length)) {
+        packet_copy_bytes_reversed(dst, data, length);
+    } else {
+        memcpy(dst, data, length);
+    }
+#else
+    memcpy(dst, data, length);
+#endif
     packet->dataLength += length;
     packet->cursor     += length;
 }
@@ -184,10 +232,20 @@ u8 packet_initial_read(struct Packet* packet) {
 
 void packet_read(struct Packet* packet, void* data, u16 length) {
     u16 cursor = packet->cursor;
+    if (length == 0) { return; }
     if (data == NULL) { packet->error = true; return; }
     if (cursor + length >= PACKET_LENGTH) { packet->error = true; return; }
 
-    memcpy(data, &packet->buffer[cursor], length);
+    const u8* src = &packet->buffer[cursor];
+#ifdef TARGET_WII_U
+    if (packet_needs_scalar_swap(length)) {
+        packet_copy_bytes_reversed(data, src, length);
+    } else {
+        memcpy(data, src, length);
+    }
+#else
+    memcpy(data, src, length);
+#endif
     packet->cursor = cursor + length;
 }
 
@@ -203,8 +261,7 @@ u32 packet_hash(struct Packet* packet) {
 
 bool packet_check_hash(struct Packet* packet) {
     u32 localHash = packet_hash(packet);
-    u32 packetHash = 0;
-    memcpy(&packetHash, &packet->buffer[packet->dataLength], sizeof(u32));
+    u32 packetHash = packet_load_u32_le(&packet->buffer[packet->dataLength]);
     return localHash == packetHash;
 }
 
@@ -226,6 +283,5 @@ void packet_set_ordered_data(struct Packet* packet) {
     if (packet->orderedGroupId == 0) { return; }
     if (packet->orderedSeqId != 0) { return; }
     packet->orderedSeqId = sCurrentOrderedSeqId++;
-    u16* seqId = (u16*)&packet->buffer[PACKET_ORDERED_SEQ_ID_OFFSET];
-    *seqId = packet->orderedSeqId;
+    packet_store_u16_le(&packet->buffer[PACKET_ORDERED_SEQ_ID_OFFSET], packet->orderedSeqId);
 }

@@ -5,7 +5,11 @@
 
 SOCKET socket_initialize(void) {
     // initialize socket
+#ifdef TARGET_WII_U
+    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+#else
     SOCKET sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+#endif
     if (sock == INVALID_SOCKET) {
         LOG_ERROR("socket failed with error %d", SOCKET_LAST_ERROR);
         return INVALID_SOCKET;
@@ -18,12 +22,14 @@ SOCKET socket_initialize(void) {
         return INVALID_SOCKET;
     }
 
+#ifndef TARGET_WII_U
     // Set socket to dual-stack
     int v6only = 0;
     if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (void *)&v6only, sizeof(v6only)) < 0) {
         LOG_ERROR("setsockopt(IPV6_V6ONLY) failed.");
         return INVALID_SOCKET;
     };
+#endif
 
     LOG_INFO("socket initialized.");
 

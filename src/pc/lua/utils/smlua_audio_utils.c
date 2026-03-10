@@ -1,8 +1,10 @@
+#ifndef TARGET_WII_U
 #define MINIAUDIO_IMPLEMENTATION // required by miniaudio
 
 // enable Vorbis decoding (provides ogg audio decoding support) for miniaudio
 #define STB_VORBIS_HEADER_ONLY
 #include "pc/utils/stb_vorbis.c"
+#endif
 
 #include "types.h"
 #include "seq_ids.h"
@@ -173,6 +175,129 @@ void smlua_audio_utils_replace_sequence(u8 sequenceId, u8 bankId, u8 defaultVolu
   ///////////////
  // mod audio //
 ///////////////
+
+#ifdef TARGET_WII_U
+// Keep Wii U stable by stubbing streamed/sample mod-audio playback for now.
+// Core sequence playback and sequence overrides still run through the main audio engine.
+static struct ModAudio* audio_alloc(const char* filename, bool isStream) {
+    struct ModAudio* audio = calloc(1, sizeof(struct ModAudio));
+    if (!audio) { return NULL; }
+    if (filename != NULL) {
+        audio->filepath = strdup(filename);
+    }
+    audio->isStream = isStream;
+    audio->loaded = true;
+    audio->baseVolume = 1.0f;
+    return audio;
+}
+
+struct ModAudio* audio_stream_load(const char* filename) {
+    return audio_alloc(filename, true);
+}
+
+void audio_stream_destroy(struct ModAudio* audio) {
+    if (!audio) { return; }
+    if (audio->filepath) {
+        free((void*)audio->filepath);
+    }
+    free(audio);
+}
+
+void audio_stream_play(UNUSED struct ModAudio* audio, UNUSED bool restart, UNUSED f32 volume) {
+}
+
+void audio_stream_pause(UNUSED struct ModAudio* audio) {
+}
+
+void audio_stream_stop(UNUSED struct ModAudio* audio) {
+}
+
+f32 audio_stream_get_position(UNUSED struct ModAudio* audio) {
+    return 0.0f;
+}
+
+void audio_stream_set_position(UNUSED struct ModAudio* audio, UNUSED f32 pos) {
+}
+
+bool audio_stream_get_looping(UNUSED struct ModAudio* audio) {
+    return false;
+}
+
+void audio_stream_set_looping(UNUSED struct ModAudio* audio, UNUSED bool looping) {
+}
+
+void audio_stream_set_loop_points(UNUSED struct ModAudio* audio, UNUSED s64 loopStart, UNUSED s64 loopEnd) {
+}
+
+f32 audio_stream_get_frequency(UNUSED struct ModAudio* audio) {
+    return 1.0f;
+}
+
+void audio_stream_set_frequency(UNUSED struct ModAudio* audio, UNUSED f32 freq) {
+}
+
+f32 audio_stream_get_volume(struct ModAudio* audio) {
+    if (!audio) { return 0.0f; }
+    return audio->baseVolume;
+}
+
+void audio_stream_set_volume(struct ModAudio* audio, f32 volume) {
+    if (!audio) { return; }
+    audio->baseVolume = volume;
+}
+
+void audio_sample_destroy_pending_copies(void) {
+}
+
+struct ModAudio* audio_sample_load(const char* filename) {
+    return audio_alloc(filename, false);
+}
+
+void audio_sample_destroy(struct ModAudio* audio) {
+    audio_stream_destroy(audio);
+}
+
+void audio_sample_stop(UNUSED struct ModAudio* audio) {
+}
+
+void audio_sample_play(UNUSED struct ModAudio* audio, UNUSED Vec3f position, UNUSED f32 volume) {
+}
+
+void audio_custom_update_volume(void) {
+    bool hasFocus = true;
+    bool shouldMute;
+    f32 musicVolume;
+    f32 sfxVolume;
+    f32 envVolume;
+
+    if (wm_api != NULL && wm_api->has_focus != NULL) {
+        hasFocus = wm_api->has_focus();
+    }
+
+    gMasterVolume = ((f32)configMasterVolume / 127.0f) * ((f32)gLuaVolumeMaster / 127.0f);
+    musicVolume = ((f32)configMusicVolume / 127.0f) * ((f32)gLuaVolumeLevel / 127.0f);
+    sfxVolume = ((f32)configSfxVolume / 127.0f) * ((f32)gLuaVolumeSfx / 127.0f);
+    envVolume = ((f32)configEnvVolume / 127.0f) * ((f32)gLuaVolumeEnv / 127.0f);
+
+    shouldMute = (configMuteFocusLoss && !hasFocus) || (gMasterVolume <= 0.0f);
+    if (shouldMute) {
+        musicVolume = 0.0f;
+        sfxVolume = 0.0f;
+        envVolume = 0.0f;
+    }
+
+    set_sequence_player_volume(SEQ_PLAYER_LEVEL, musicVolume);
+    set_sequence_player_volume(SEQ_PLAYER_SFX, sfxVolume);
+    set_sequence_player_volume(SEQ_PLAYER_ENV, envVolume);
+}
+
+void audio_custom_shutdown(void) {
+}
+
+void smlua_audio_custom_deinit(void) {
+}
+
+#else
 
 // Optimization: disable spatialization for everything as it's not used
 #define MA_SOUND_STREAM_FLAGS (MA_SOUND_FLAG_NO_SPATIALIZATION | MA_SOUND_FLAG_STREAM)
@@ -662,3 +787,5 @@ void smlua_audio_custom_deinit(void) {
         sModAudioPool = NULL;
     }
 }
+
+#endif // TARGET_WII_U

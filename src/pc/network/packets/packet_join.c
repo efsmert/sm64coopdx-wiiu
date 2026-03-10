@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include "../network.h"
 #include "object_fields.h"
 #include "object_constants.h"
@@ -26,6 +27,13 @@
 #include "pc/lua/smlua.h"
 #include "pc/configfile.h"
 #include "pc/lua/utils/smlua_misc_utils.h"
+#include "pc/network/coopnet/coopnet.h"
+#include "pc/network/coopnet/coopnet_id.h"
+#ifdef TARGET_WII_U
+#define JOIN_WIIU_LOG(...)
+#else
+#define JOIN_WIIU_LOG(...)
+#endif
 
 extern u8* gOverrideEeprom;
 static u8 eeprom[512] = { 0 };
@@ -52,13 +60,24 @@ void network_send_join_request(void) {
     packet_write(&p, &configPlayerPalette, sizeof(struct PlayerPalette));
     packet_write(&p, &configPlayerName,    sizeof(u8) * MAX_CONFIG_STRING);
 
-    network_send_to((gNetworkPlayerServer != NULL) ? gNetworkPlayerServer->localIndex : 0, &p);
+    network_send_to(network_get_server_local_index(), &p);
     LOG_INFO("sending join request");
 }
 
 void network_receive_join_request(struct Packet* p) {
     SOFT_ASSERT(gNetworkType == NT_SERVER);
     LOG_INFO("received join request");
+
+#ifdef COOPNET
+    if (p->addr != NULL) {
+        uint64_t userId = 0;
+        memcpy(&userId, p->addr, sizeof(userId));
+        u8 reserved = coopnet_reserve_user_id(userId);
+        if (reserved != UNKNOWN_LOCAL_INDEX) {
+            p->localIndex = reserved;
+        }
+    }
+#endif
 
     if (p->dataLength > 5) {
         char version[MAX_VERSION_LENGTH] = { 0 };
@@ -136,6 +155,9 @@ void network_send_join(struct Packet* joinRequestPacket) {
 
 void network_receive_join(struct Packet* p) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
+#ifdef COOPNET
+    coopnet_mark_client_join_progress("join_packet");
+#endif
     if (gNetworkPlayerLocal != NULL) { return; }
     LOG_INFO("received join packet");
     gCurrentlyJoining = true;
@@ -192,6 +214,7 @@ void network_receive_join(struct Packet* p) {
 
     fake_lvl_init_from_save_file();
 
+    JOIN_WIIU_LOG("network: join packet activating remote mods=%d\n", gRemoteMods.entryCount);
     mods_activate(&gRemoteMods);
     djui_panel_modlist_create(NULL);
     smlua_init();

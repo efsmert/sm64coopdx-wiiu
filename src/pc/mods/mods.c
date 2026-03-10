@@ -8,6 +8,11 @@
 #include "pc/fs/fmem.h"
 #include "pc/pc_main.h"
 #include "pc/utils/misc.h"
+#ifdef TARGET_WII_U
+#define MODS_WIIU_LOG(...)
+#else
+#define MODS_WIIU_LOG(...)
+#endif
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
@@ -165,9 +170,12 @@ void mods_activate(struct Mods* mods) {
     // copy enabled entries
     gActiveMods.entryCount = 0;
     gActiveMods.size = 0;
+    MODS_WIIU_LOG("mods_activate: source_entries=%d enabled=%d\n", mods->entryCount, enabledCount);
     for (int i = 0; i < mods->entryCount; i++) {
         struct Mod* mod = mods->entries[i];
         if (mod->enabled) {
+            MODS_WIIU_LOG("mods_activate: enabling mod[%d] rel=%s files=%d base=%s\n",
+                          i, mod->relativePath, mod->fileCount, mod->basePath);
             mod->index = gActiveMods.entryCount;
             gActiveMods.entries[gActiveMods.entryCount++] = mod;
             gActiveMods.size += mod->size;

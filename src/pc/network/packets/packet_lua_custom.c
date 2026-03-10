@@ -1,9 +1,26 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "../network.h"
 #include "pc/mods/mod.h"
 #include "pc/lua/smlua.h"
 #include "pc/lua/smlua_utils.h"
 #include "pc/debuglog.h"
+
+static void network_lnt_cleanup(struct LSTNetworkType* lnt) {
+    if (lnt == NULL) { return; }
+    if (lnt->type != LST_NETWORK_TYPE_STRING) { return; }
+    if (lnt->value.string == NULL) { return; }
+    free(lnt->value.string);
+    lnt->value.string = NULL;
+}
+
+static void network_lua_custom_log_malformed(const char* stage) {
+    static u32 sMalformedCount = 0;
+    sMalformedCount++;
+    if (sMalformedCount <= 4 || (sMalformedCount % 128) == 0) {
+        LOG_ERROR("Dropped malformed lua custom packet (%s), count=%u", stage, sMalformedCount);
+    }
+}
 
 void network_send_lua_custom(bool broadcast) {
     lua_State* L = gLuaState;
@@ -111,23 +128,35 @@ void network_receive_lua_custom(struct Packet* p) {
     s32 tableIndex = lua_gettop(L);
     for(u16 i = 0; i < keyCount; i++) {
         struct LSTNetworkType lntKey = { 0 };
-        if (!packet_read_lnt(p, &lntKey)) {
-            LOG_LUA_LINE("Failed to convert key to LNT (rx)");
-            return;
+        if (!packet_read_lnt(p, &lntKey) || p->error) {
+            network_lua_custom_log_malformed("key");
+            network_lnt_cleanup(&lntKey);
+            goto cleanup;
         }
-        smlua_push_lnt(&lntKey);
 
         struct LSTNetworkType lntValue = { 0 };
-        if (!packet_read_lnt(p, &lntValue)) {
-            LOG_LUA_LINE("Failed to convert value to LNT (rx)");
-            return;
+        if (!packet_read_lnt(p, &lntValue) || p->error) {
+            network_lua_custom_log_malformed("value");
+            network_lnt_cleanup(&lntKey);
+            network_lnt_cleanup(&lntValue);
+            goto cleanup;
         }
+
+        smlua_push_lnt(&lntKey);
         smlua_push_lnt(&lntValue);
 
         lua_settable(L, -3);
+        network_lnt_cleanup(&lntKey);
+        network_lnt_cleanup(&lntValue);
+    }
+
+    if (p->error) {
+        network_lua_custom_log_malformed("cursor");
+        goto cleanup;
     }
 
     smlua_call_event_hooks(HOOK_ON_PACKET_RECEIVE, modIndex, tableIndex);
+cleanup:
     lua_pop(L, 1); // pop table
 }
 

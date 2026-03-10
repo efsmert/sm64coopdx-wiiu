@@ -14,9 +14,47 @@
 #define CMD_SIZE_SHIFT (sizeof(void *) >> 3)
 #define CMD_PROCESS_OFFSET(offset) (((offset) & 3) | (((offset) & ~3) << CMD_SIZE_SHIFT))
 
+extern u8 *gGeoLayoutCommand;
+
 #define cur_geo_cmd_u8(offset) \
     (gGeoLayoutCommand[CMD_PROCESS_OFFSET(offset)])
 
+#ifdef TARGET_WII_U
+extern u8 gGeoLayoutDynosLittleEndian;
+
+static inline s16 cur_geo_cmd_read_s16(u32 offset) {
+    s16 value = (*(s16 *) &gGeoLayoutCommand[CMD_PROCESS_OFFSET(offset)]);
+    if (gGeoLayoutDynosLittleEndian) {
+        value = (s16) __builtin_bswap16((u16) value);
+    }
+    return value;
+}
+
+static inline s32 cur_geo_cmd_read_s32(u32 offset) {
+    s32 value = (*(s32 *) &gGeoLayoutCommand[CMD_PROCESS_OFFSET(offset)]);
+    if (gGeoLayoutDynosLittleEndian) {
+        value = (s32) __builtin_bswap32((u32) value);
+    }
+    return value;
+}
+
+static inline u32 cur_geo_cmd_read_u32(u32 offset) {
+    u32 value = (*(u32 *) &gGeoLayoutCommand[CMD_PROCESS_OFFSET(offset)]);
+    if (gGeoLayoutDynosLittleEndian) {
+        value = __builtin_bswap32(value);
+    }
+    return value;
+}
+
+#define cur_geo_cmd_s16(offset) \
+    (cur_geo_cmd_read_s16(offset))
+
+#define cur_geo_cmd_s32(offset) \
+    (cur_geo_cmd_read_s32(offset))
+
+#define cur_geo_cmd_u32(offset) \
+    (cur_geo_cmd_read_u32(offset))
+#else
 #define cur_geo_cmd_s16(offset) \
     (*(s16 *) &gGeoLayoutCommand[CMD_PROCESS_OFFSET(offset)])
 
@@ -25,6 +63,7 @@
 
 #define cur_geo_cmd_u32(offset) \
     (*(u32 *) &gGeoLayoutCommand[CMD_PROCESS_OFFSET(offset)])
+#endif
 
 #define cur_geo_cmd_ptr(offset) \
     (*(void **) &gGeoLayoutCommand[CMD_PROCESS_OFFSET(offset)])

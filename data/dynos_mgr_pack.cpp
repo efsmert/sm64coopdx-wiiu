@@ -41,8 +41,16 @@ static void ScanPackBins(struct PackData* aPack) {
 static void DynOS_Pack_ActivateActor(s32 aPackIndex, std::pair<std::string, GfxData *> &pair) {
     const char* aActorName = pair.first.c_str();
     GfxData* aGfxData = pair.second;
+    if (aGfxData == NULL || aGfxData->mGeoLayouts.Empty()) {
+        PrintError("  ERROR: Pack actor \"%s\" has no geo data", aActorName ? aActorName : "(null)");
+        return;
+    }
 
     auto& geoNode = *(aGfxData->mGeoLayouts.end() - 1);
+    if (geoNode == NULL || geoNode->mData == NULL) {
+        PrintError("  ERROR: Pack actor \"%s\" has invalid geo layout", aActorName ? aActorName : "(null)");
+        return;
+    }
     u32 id = 0;
     GraphNode* graphNode = DynOS_Model_LoadGeo(&id, MODEL_POOL_PERMANENT, geoNode->mData, true);
     if (graphNode == NULL) { return; }

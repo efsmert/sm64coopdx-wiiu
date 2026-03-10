@@ -371,14 +371,14 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(struct ColorCo
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         ied[ied_index++] = { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
-    if (cc->cm.use_fog) {
+    if (gfx_cm_has(&cc->cm, CM_FLAG_USE_FOG)) {
         ied[ied_index++] = { "FOG", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
-    if (cc->cm.light_map) {
+    if (gfx_cm_has(&cc->cm, CM_FLAG_LIGHT_MAP)) {
         ied[ied_index++] = { "LIGHTMAP", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
     for (uint32_t i = 0; i < cc_features.num_inputs; i++) {
-        DXGI_FORMAT format = cc->cm.use_alpha ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
+        DXGI_FORMAT format = gfx_cm_has(&cc->cm, CM_FLAG_USE_ALPHA) ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
         ied[ied_index++] = { "INPUT", i, format, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
 
@@ -389,7 +389,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(struct ColorCo
     D3D11_BLEND_DESC blend_desc;
     ZeroMemory(&blend_desc, sizeof(D3D11_BLEND_DESC));
 
-    if (cc->cm.use_alpha) {
+    if (gfx_cm_has(&cc->cm, CM_FLAG_USE_ALPHA)) {
         blend_desc.RenderTarget[0].BlendEnable = true;
         blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
         blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;

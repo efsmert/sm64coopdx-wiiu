@@ -19,6 +19,7 @@
 #include "include/macro_presets.h"
 #include "utils/smlua_anim_utils.h"
 #include "utils/smlua_collision_utils.h"
+#include "utils/smlua_model_utils.h"
 #include "game/hardcoded.h"
 #include "include/macros.h"
 
@@ -55,7 +56,8 @@ int smlua_func_table_copy(lua_State *L) {
     }
 
     // Create a new table that will be the copy
-    lua_newtable(L);
+    // Pre-size hash part for fixed keys to avoid incremental rehash churn on Wii U.
+    lua_createtable(L, 0, 6);
 
     // Iterate through original table
     lua_pushnil(L); // first key
@@ -413,31 +415,31 @@ int smlua_func_get_texture_info(lua_State* L) {
         return 0;
     }
 
-    lua_newtable(L);
+    // Pre-size hash part to avoid incremental rehash churn while setting fixed fields.
+    lua_createtable(L, 0, 6);
 
-    lua_pushstring(L, "texture");
+#ifdef TARGET_WII_U
+    // Wii U stability path: avoid userdata caching/metatable churn here.
+    lua_pushnil(L);
+#else
     smlua_push_pointer(L, LVT_TEXTURE_P, (void *) texInfo.texture, NULL);
-    lua_settable(L, -3);
+#endif
+    lua_setfield(L, -2, "texture");
 
-    lua_pushstring(L, "width");
     lua_pushinteger(L, texInfo.width);
-    lua_settable(L, -3);
+    lua_setfield(L, -2, "width");
 
-    lua_pushstring(L, "height");
     lua_pushinteger(L, texInfo.height);
-    lua_settable(L, -3);
+    lua_setfield(L, -2, "height");
 
-    lua_pushstring(L, "format");
     lua_pushinteger(L, texInfo.format);
-    lua_settable(L, -3);
+    lua_setfield(L, -2, "format");
 
-    lua_pushstring(L, "size");
     lua_pushinteger(L, texInfo.size);
-    lua_settable(L, -3);
+    lua_setfield(L, -2, "size");
 
-    lua_pushstring(L, "name");
-    lua_pushstring(L, texInfo.name);
-    lua_settable(L, -3);
+    lua_pushstring(L, textureName != NULL ? textureName : "");
+    lua_setfield(L, -2, "name");
 
     return 1;
 }
@@ -464,6 +466,19 @@ int smlua_func_texture_override_reset(lua_State* L) {
 
     dynos_texture_override_reset(textureName);
 
+    return 1;
+}
+
+int smlua_func_smlua_model_util_get_id_wiiu(lua_State* L) {
+    if (!smlua_functions_valid_param_count(L, 1)) { return 0; }
+
+    const char* name = smlua_to_string(L, 1);
+    if (!gSmLuaConvertSuccess) {
+        LOG_LUA("smlua_model_util_get_id: Failed to convert parameter 1");
+        return 0;
+    }
+
+    lua_pushinteger(L, smlua_model_util_get_id(name));
     return 1;
 }
 
@@ -1010,6 +1025,7 @@ void smlua_bind_functions(void) {
     smlua_bind_function(L, "set_exclamation_box_contents", smlua_func_set_exclamation_box_contents);
     smlua_bind_function(L, "get_exclamation_box_contents", smlua_func_get_exclamation_box_contents);
     smlua_bind_function(L, "get_texture_info", smlua_func_get_texture_info);
+    smlua_bind_function(L, "smlua_model_util_get_id", smlua_func_smlua_model_util_get_id_wiiu);
     smlua_bind_function(L, "texture_override_set", smlua_func_texture_override_set);
     smlua_bind_function(L, "texture_override_reset", smlua_func_texture_override_reset);
     smlua_bind_function(L, "level_script_parse", smlua_func_level_script_parse);

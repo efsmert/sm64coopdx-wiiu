@@ -55,12 +55,51 @@ uint64_t coopnet_get_dest_id(uint64_t userId) {
 }
 
 u8 coopnet_user_id_to_local_index(uint64_t userId) {
+    if (userId == 0) { return UNKNOWN_LOCAL_INDEX; }
+
     for (int i = 1; i < MAX_PLAYERS; i++) {
-        if (gNetworkPlayers[i].connected && sNetworkUserIds[i] == userId) {
+        if (sNetworkUserIds[i] == userId) {
             return i;
         }
     }
     return UNKNOWN_LOCAL_INDEX;
+}
+
+u8 coopnet_reserve_user_id(uint64_t userId) {
+    if (userId == 0) { return UNKNOWN_LOCAL_INDEX; }
+
+    u8 localIndex = coopnet_user_id_to_local_index(userId);
+    if (localIndex != UNKNOWN_LOCAL_INDEX) {
+        return localIndex;
+    }
+
+    // First prefer an unused disconnected slot.
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        if (sNetworkUserIds[i] == 0 && !gNetworkPlayers[i].connected) {
+            sNetworkUserIds[i] = userId;
+            return (u8)i;
+        }
+    }
+
+    // If no empty slots exist, reclaim any disconnected provisional slot.
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        if (!gNetworkPlayers[i].connected) {
+            sNetworkUserIds[i] = userId;
+            return (u8)i;
+        }
+    }
+
+    return UNKNOWN_LOCAL_INDEX;
+}
+
+void coopnet_clear_user_id(uint64_t userId) {
+    if (userId == 0) { return; }
+
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (sNetworkUserIds[i] == userId) {
+            sNetworkUserIds[i] = 0;
+        }
+    }
 }
 
 void coopnet_set_user_id(uint8_t localIndex, uint64_t userId) {
@@ -87,7 +126,18 @@ s64 ns_coopnet_get_id(u8 localIndex) {
 void ns_coopnet_save_id(u8 localIndex, s64 networkId) {
     SOFT_ASSERT(localIndex > 0);
     SOFT_ASSERT(localIndex < MAX_PLAYERS);
-    sNetworkUserIds[localIndex] = (networkId == 0) ? sNetworkUserIds[0] : (u64)networkId;
+    if (networkId != 0) {
+        sNetworkUserIds[localIndex] = (u64)networkId;
+        return;
+    }
+
+    if (sNetworkUserIds[localIndex] != 0) {
+        // Keep any provisional mapping established before full join.
+        return;
+    }
+
+    // Fallback for older flows that only know the lobby owner at this point.
+    sNetworkUserIds[localIndex] = sNetworkUserIds[0];
 }
 
 void ns_coopnet_clear_id(u8 localIndex) {

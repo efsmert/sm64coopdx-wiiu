@@ -1,4 +1,8 @@
 #include <PR/ultratypes.h>
+#include <string.h>
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#endif
 #include "rom_assets.h"
 #include "pc/debuglog.h"
 #include "rom_checker.h"
@@ -15,6 +19,9 @@ struct RomAsset {
     u32 segmentedAddress;
     u32 segmentedSize;
     u32 cursor;
+    u32 queueIndex;
+    const char* sourceFile;
+    int sourceLine;
     struct RomAsset* next;
 };
 
@@ -30,7 +37,7 @@ static s16 READ16(struct RomAsset* asset) {
     s64 index = (asset->segmentedAddress + asset->cursor);
     if (index < 0 || index >= sCurrentSegmentSize) { return 0; }
     u8* ptr = &sCurrentSegmentMemory[index];
-    s16 value = BSWAP16(*((s16*)ptr));
+    s16 value = BE_TO_HOST16(*((s16*)ptr));
     asset->cursor += sizeof(s16);
     return value;
 }
@@ -163,6 +170,19 @@ static void rom_asset_load(struct RomAsset* asset) {
         default:
             LOG_ERROR("Could not load unknown asset type %u!", asset->assetType);
     }
+#ifdef TARGET_WII_U
+    if (asset->assetType == ROM_ASSET_COLLISION &&
+        asset->sourceFile != NULL &&
+        strstr(asset->sourceFile, "castle_grounds/areas/1/collision.inc.c") != NULL) {
+        Collision *data = asset->ptr;
+        OSReport("rom_assets: castle grounds collision loaded ptr=%p words=%04x %04x %04x %04x %04x %04x %04x %04x\n",
+                 asset->ptr,
+                 (unsigned)((u16)data[0]), (unsigned)((u16)data[1]),
+                 (unsigned)((u16)data[2]), (unsigned)((u16)data[3]),
+                 (unsigned)((u16)data[4]), (unsigned)((u16)data[5]),
+                 (unsigned)((u16)data[6]), (unsigned)((u16)data[7]));
+    }
+#endif
 }
 
 void rom_assets_load(void) {
@@ -171,6 +191,10 @@ void rom_assets_load(void) {
     assert(fs_sys_file_exists(gRomFilename)); // Should never be false
 
     sRomFile = fopen(gRomFilename, "rb");
+    if (sRomFile == NULL) {
+        LOG_ERROR("Could not open ROM file '%s'", gRomFilename);
+        return;
+    }
 
     while (sRomAssets) {
         rom_asset_load(sRomAssets);
@@ -188,7 +212,7 @@ void rom_assets_load(void) {
     fclose(sRomFile);
 }
 
-void rom_assets_queue(void* ptr, enum RomAssetType assetType, u32 physicalAddress, u32 physicalSize, u32 segmentedAddress, u32 segmentedSize) {
+void rom_assets_queue(void* ptr, enum RomAssetType assetType, u32 physicalAddress, u32 physicalSize, u32 segmentedAddress, u32 segmentedSize, const char* sourceFile, int sourceLine) {
     struct RomAsset* asset = (struct RomAsset*)calloc(1, sizeof(struct RomAsset));
     asset->ptr = ptr;
     asset->assetType = assetType;
@@ -197,24 +221,27 @@ void rom_assets_queue(void* ptr, enum RomAssetType assetType, u32 physicalAddres
     asset->segmentedAddress = segmentedAddress;
     asset->segmentedSize = segmentedSize;
     asset->cursor = 0;
+    asset->queueIndex = 0;
+    asset->sourceFile = sourceFile;
+    asset->sourceLine = sourceLine;
     asset->next = sRomAssets;
     sRomAssets = asset;
     LOG_INFO("added asset");
 }
 
 u8* rom_assets_decompress(u32* data, u32* decompressedSize) {
-    if (BSWAP32(data[0]) != 0x4d494f30) {
+    if (BE_TO_HOST32(data[0]) != 0x4d494f30) {
         return NULL;
     }
 
     // ripped from tools/gen_asset_list.cpp
     uint32_t* src = data;
-    uint32_t size = BSWAP32(src[1]);
+    uint32_t size = BE_TO_HOST32(src[1]);
     u8* output = calloc(size, 1);
     char *dest = (char *)output;
     char *destEnd = (size + dest);
-    uint16_t *cmpOffset = (uint16_t *)((char *)src + BSWAP32(src[2]));
-    char *rawOffset = ((char *)src + BSWAP32(src[3]));
+    uint16_t *cmpOffset = (uint16_t *)((char *)src + BE_TO_HOST32(src[2]));
+    char *rawOffset = ((char *)src + BE_TO_HOST32(src[3]));
     int counter = 0;
     uint32_t controlBits;
 
@@ -223,28 +250,24 @@ u8* rom_assets_decompress(u32* data, u32* decompressedSize) {
     while (dest != destEnd) {
         if (counter == 0) {
             controlBits = *src++;
-            controlBits = BSWAP32(controlBits);
+            controlBits = BE_TO_HOST32(controlBits);
             counter = 32;
         }
-
         if (controlBits & 0x80000000) {
             *dest++ = *rawOffset++;
-        }
-        else {
+        } else {
             uint16_t dcmpParam = *cmpOffset++;
-            dcmpParam = BSWAP16(dcmpParam);
+            dcmpParam = BE_TO_HOST16(dcmpParam);
             int dcmpCount = (dcmpParam >> 12) + 3;
             char* dcmpPtr = dest - (dcmpParam & 0x0FFF);
 
-            while (dcmpCount) {
+            while (dcmpCount-- > 0 && dest != destEnd) {
                 *dest++ = dcmpPtr[-1];
-                dcmpCount--;
                 dcmpPtr++;
             }
         }
-
-        counter--;
         controlBits <<= 1;
+        counter--;
     }
 
     *decompressedSize = size;

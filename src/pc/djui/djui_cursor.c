@@ -160,6 +160,22 @@ static void djui_cursor_update_position(void) {
     } else {
         sMouseCursor->textureInfo.texture = gd_texture_hand_open;
     }
+#else
+    if (djui_interactable_is_binding()) { return; }
+    if (sMouseCursor == NULL) { return; }
+    if (!djui_panel_is_active()) { return; }
+
+    if (sInputControlledBase != NULL) {
+        djui_cursor_base_hover_location(sInputControlledBase, &gCursorX, &gCursorY);
+    }
+
+    djui_base_set_location(&sMouseCursor->base, gCursorX - 13, gCursorY - 13);
+
+    if (gInteractablePad.button & PAD_BUTTON_A) {
+        sMouseCursor->textureInfo.texture = gd_texture_hand_closed;
+    } else {
+        sMouseCursor->textureInfo.texture = gd_texture_hand_open;
+    }
 #endif
 }
 

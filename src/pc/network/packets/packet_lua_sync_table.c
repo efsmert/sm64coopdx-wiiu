@@ -9,7 +9,7 @@ void network_send_lua_sync_table_request(void) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
     struct Packet p = { 0 };
     packet_init(&p, PACKET_LUA_SYNC_TABLE_REQUEST, true, PLMT_NONE);
-    network_send_to((gNetworkPlayerServer != NULL) ? gNetworkPlayerServer->localIndex : 0, &p);
+    network_send_to(network_get_server_local_index(), &p);
     LOG_INFO("sending lua sync table request");
 }
 

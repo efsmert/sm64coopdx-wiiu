@@ -9,6 +9,11 @@
 #include "pc/debuglog.h"
 #include "pc/fs/fmem.h"
 #include <stdint.h>
+#ifdef TARGET_WII_U
+#define MOD_WIIU_LOG(...)
+#else
+#define MOD_WIIU_LOG(...)
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -31,9 +36,20 @@ size_t mod_get_lua_size(struct Mod* mod) {
 }
 
 static void mod_activate_bin(struct Mod* mod, struct ModFile* file) {
+    if (file->cachedPath == NULL || file->relativePath[0] == '\0') {
+        LOG_ERROR("Skipping invalid DynOS bin file (null path)");
+        return;
+    }
+
+    const char* baseName = path_basename(file->relativePath);
+    if (baseName == NULL || baseName[0] == '\0') {
+        LOG_ERROR("Skipping DynOS bin with invalid basename: '%s'", file->relativePath);
+        return;
+    }
+
     // copy geo name
     char geoName[64] = { 0 };
-    if (snprintf(geoName, 63, "%s", path_basename(file->relativePath)) < 0) {
+    if (snprintf(geoName, 63, "%s", baseName) < 0) {
         LOG_ERROR("Truncated geo name");
         return;
     }
@@ -47,6 +63,10 @@ static void mod_activate_bin(struct Mod* mod, struct ModFile* file) {
         }
         g++;
     }
+    if (geoName[0] == '\0') {
+        LOG_ERROR("Skipping DynOS bin with empty geo name: '%s'", file->relativePath);
+        return;
+    }
 
     // get mod file index
     s32 fileIndex = (file - &mod->files[0]);
@@ -54,13 +74,26 @@ static void mod_activate_bin(struct Mod* mod, struct ModFile* file) {
 
     // Add to custom actors
     LOG_INFO("Activating DynOS bin: '%s', '%s'", file->cachedPath, geoName);
-    dynos_add_actor_custom(mod->index, fileIndex, file->cachedPath, geoName);
+    bool ok = dynos_add_actor_custom(mod->index, fileIndex, file->cachedPath, geoName);
+    MOD_WIIU_LOG("mod: activate bin mod=%s file=%s geo=%s ok=%d\n",
+                 mod->relativePath, file->cachedPath, geoName, ok ? 1 : 0);
 }
 
 static void mod_activate_col(struct ModFile* file) {
+    if (file->cachedPath == NULL || file->relativePath[0] == '\0') {
+        LOG_ERROR("Skipping invalid DynOS col file (null path)");
+        return;
+    }
+
+    const char* baseName = path_basename(file->relativePath);
+    if (baseName == NULL || baseName[0] == '\0') {
+        LOG_ERROR("Skipping DynOS col with invalid basename: '%s'", file->relativePath);
+        return;
+    }
+
     // copy col name
     char colName[64] = { 0 };
-    if (snprintf(colName, 63, "%s", path_basename(file->relativePath)) < 0) {
+    if (snprintf(colName, 63, "%s", baseName) < 0) {
         LOG_ERROR("Truncated col name");
         return;
     }
@@ -77,13 +110,26 @@ static void mod_activate_col(struct ModFile* file) {
 
     // Add to custom actors
     LOG_INFO("Activating DynOS col: '%s', '%s'", file->cachedPath, colName);
-    dynos_add_collision(file->cachedPath, colName);
+    bool ok = dynos_add_collision(file->cachedPath, colName);
+    MOD_WIIU_LOG("mod: activate col mod_file=%s col=%s ok=%d\n",
+                 file->cachedPath, colName, ok ? 1 : 0);
 }
 
 static void mod_activate_tex(struct ModFile* file) {
+    if (file->cachedPath == NULL || file->relativePath[0] == '\0') {
+        LOG_ERROR("Skipping invalid DynOS tex file (null path)");
+        return;
+    }
+
+    const char* baseName = path_basename(file->relativePath);
+    if (baseName == NULL || baseName[0] == '\0') {
+        LOG_ERROR("Skipping DynOS tex with invalid basename: '%s'", file->relativePath);
+        return;
+    }
+
     // copy tex name
     char texName[64] = { 0 };
-    if (snprintf(texName, 63, "%s", path_basename(file->relativePath)) < 0) {
+    if (snprintf(texName, 63, "%s", baseName) < 0) {
         LOG_ERROR("Truncated tex name");
         return;
     }
@@ -100,13 +146,26 @@ static void mod_activate_tex(struct ModFile* file) {
 
     // Add to custom actors
     LOG_INFO("Activating DynOS tex: '%s', '%s'", file->cachedPath, texName);
-    dynos_add_texture(file->cachedPath, texName);
+    bool ok = dynos_add_texture(file->cachedPath, texName);
+    MOD_WIIU_LOG("mod: activate tex mod_file=%s tex=%s ok=%d\n",
+                 file->cachedPath, texName, ok ? 1 : 0);
 }
 
 static void mod_activate_lvl(struct Mod* mod, struct ModFile* file) {
+    if (file->cachedPath == NULL || file->relativePath[0] == '\0') {
+        LOG_ERROR("Skipping invalid DynOS lvl file (null path)");
+        return;
+    }
+
+    const char* baseName = path_basename(file->relativePath);
+    if (baseName == NULL || baseName[0] == '\0') {
+        LOG_ERROR("Skipping DynOS lvl with invalid basename: '%s'", file->relativePath);
+        return;
+    }
+
     // copy lvl name
     char lvlName[64] = { 0 };
-    if (snprintf(lvlName, 63, "%s", path_basename(file->relativePath)) < 0) {
+    if (snprintf(lvlName, 63, "%s", baseName) < 0) {
         LOG_ERROR("Truncated lvl name");
         return;
     }
@@ -123,13 +182,26 @@ static void mod_activate_lvl(struct Mod* mod, struct ModFile* file) {
 
     // Add to levels
     LOG_INFO("Activating DynOS lvl: '%s', '%s'", file->cachedPath, lvlName);
+    MOD_WIIU_LOG("mod: activate lvl mod=%s file=%s lvl=%s\n",
+                 mod->relativePath, file->cachedPath, lvlName);
     dynos_add_level(mod->index, file->cachedPath, lvlName);
 }
 
 static void mod_activate_bhv(struct Mod *mod, struct ModFile *file) {
+    if (file->cachedPath == NULL || file->relativePath[0] == '\0') {
+        LOG_ERROR("Skipping invalid DynOS bhv file (null path)");
+        return;
+    }
+
+    const char* baseName = path_basename(file->relativePath);
+    if (baseName == NULL || baseName[0] == '\0') {
+        LOG_ERROR("Skipping DynOS bhv with invalid basename: '%s'", file->relativePath);
+        return;
+    }
+
     // copy bhv name
     char bhvName[64] = { 0 };
-    if (snprintf(bhvName, 63, "%s", path_basename(file->relativePath)) < 0) {
+    if (snprintf(bhvName, 63, "%s", baseName) < 0) {
         LOG_ERROR("Truncated bhv name");
         return;
     }
@@ -146,6 +218,8 @@ static void mod_activate_bhv(struct Mod *mod, struct ModFile *file) {
 
     // Add to levels
     LOG_INFO("Activating DynOS bhv: '%s', '%s'", file->cachedPath, bhvName);
+    MOD_WIIU_LOG("mod: activate bhv mod=%s file=%s bhv=%s\n",
+                 mod->relativePath, file->cachedPath, bhvName);
     dynos_add_behavior(mod->index, file->cachedPath, bhvName);
 }
 
@@ -153,6 +227,10 @@ void mod_activate(struct Mod* mod) {
     // activate dynos models
     for (int i = 0; i < mod->fileCount; i++) {
         struct ModFile* file = &mod->files[i];
+#ifdef TARGET_WII_U
+        // Wii U joins can activate mods from a non-newlib-managed thread; avoid stat/md5 cache I/O here.
+        file->modifiedTimestamp = 0;
+#else
         file->modifiedTimestamp = fs_sys_get_modified_time(file->cachedPath);
         mod_cache_add(mod, file, false);
 
@@ -160,6 +238,7 @@ void mod_activate(struct Mod* mod) {
         if (gNetworkType == NT_SERVER) {
             mod_cache_update(mod, file);
         }
+#endif
 
         if (path_ends_with(file->relativePath, ".bin")) {
             mod_activate_bin(mod, file);

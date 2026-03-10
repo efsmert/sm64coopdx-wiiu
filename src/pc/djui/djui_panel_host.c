@@ -12,6 +12,11 @@
 #include "pc/utils/misc.h"
 #include "pc/configfile.h"
 #include "pc/update_checker.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#include <stdarg.h>
+#include <string.h>
+#endif
 
 static struct DjuiRect* sRectPort = NULL;
 static struct DjuiInputbox* sInputboxPort = NULL;
@@ -19,7 +24,85 @@ static struct DjuiInputbox* sInputboxPort = NULL;
 static struct DjuiRect* sRectPassword = NULL;
 static struct DjuiInputbox* sInputboxPassword = NULL;
 
+#ifdef TARGET_WII_U
+#define DJUI_MENU_STATE_BUFSZ 512
+static char sLastMenuStateLine[DJUI_MENU_STATE_BUFSZ] = "";
+static char sLastMenuHighlightLine[DJUI_MENU_STATE_BUFSZ] = "";
+
+static void djui_menu_state_logf(const char* fmt, ...) {
+    char buffer[DJUI_MENU_STATE_BUFSZ];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+    if (strcmp(buffer, sLastMenuStateLine) == 0) { return; }
+    snprintf(sLastMenuStateLine, sizeof(sLastMenuStateLine), "%s", buffer);
+    OSReport("%s", buffer);
+}
+
+static void djui_menu_state_sanitize_text(const char* text, char* out, size_t outSize) {
+    if (outSize == 0) { return; }
+    if (text == NULL) { out[0] = '\0'; return; }
+    size_t j = 0;
+    for (size_t i = 0; text[i] != '\0' && j + 1 < outSize; i++) {
+        char c = text[i];
+        if (c == '"' || c == '\n' || c == '\r') { c = ' '; }
+        out[j++] = c;
+    }
+    out[j] = '\0';
+}
+
+static void djui_menu_highlight_logf(const char* focus, const char* text) {
+    char buffer[DJUI_MENU_STATE_BUFSZ];
+    char safeText[128];
+    djui_menu_state_sanitize_text(text, safeText, sizeof(safeText));
+    snprintf(buffer, sizeof(buffer), "menu_highlight: page=host_root focus=%s text=\"%s\"\n", focus, safeText);
+    if (strcmp(buffer, sLastMenuHighlightLine) == 0) { return; }
+    snprintf(sLastMenuHighlightLine, sizeof(sLastMenuHighlightLine), "%s", buffer);
+    OSReport("%s", buffer);
+}
+#else
+static void djui_menu_state_logf(UNUSED const char* fmt, ...) { }
+static void djui_menu_highlight_logf(UNUSED const char* focus, UNUSED const char* text) { }
+#endif
+
+static void djui_panel_host_hover_network_system(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=host_root focus=network_system\n");
+    djui_menu_highlight_logf("network_system", DLANG(HOST, NETWORK_SYSTEM));
+}
+
+static void djui_panel_host_hover_save_slot(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=host_root focus=save_slot\n");
+    djui_menu_highlight_logf("save_slot", DLANG(HOST, SAVE_SLOT));
+}
+
+static void djui_panel_host_hover_settings(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=host_root focus=settings\n");
+    djui_menu_highlight_logf("settings", DLANG(HOST, SETTINGS));
+}
+
+static void djui_panel_host_hover_mods(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=host_root focus=mods\n");
+    djui_menu_highlight_logf("mods", DLANG(HOST, MODS));
+}
+
+static void djui_panel_host_hover_back(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=host_root focus=back\n");
+    djui_menu_highlight_logf("back", (gNetworkType == NT_SERVER) ? DLANG(MENU, CANCEL) : DLANG(MENU, BACK));
+}
+
+static void djui_panel_host_hover_host(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=host_root focus=host\n");
+    djui_menu_highlight_logf("host", (gNetworkType == NT_SERVER) ? DLANG(HOST, APPLY) : DLANG(HOST, HOST));
+}
+
+static void djui_panel_host_back(struct DjuiBase* caller) {
+    djui_menu_state_logf("menu_state: page=host_root action=back\n");
+    djui_panel_menu_back(caller);
+}
+
 static void djui_panel_host_network_system_change(UNUSED struct DjuiBase* base) {
+    djui_menu_state_logf("menu_state: page=host_root action=network_system_change value=%d\n", configNetworkSystem);
     djui_base_set_visible(&sRectPort->base, (configNetworkSystem == NS_SOCKET));
     djui_base_set_visible(&sRectPassword->base, (configNetworkSystem == NS_COOPNET));
     djui_base_set_enabled(&sInputboxPort->base, (configNetworkSystem == NS_SOCKET));
@@ -63,6 +146,7 @@ static void djui_panel_host_password_text_change(UNUSED struct DjuiBase* caller)
 
 extern void djui_panel_do_host(bool reconnecting, bool playSound);
 static void djui_panel_host_do_host(struct DjuiBase* caller) {
+    djui_menu_state_logf("menu_state: page=host_root action=host_lobby\n");
     if (!djui_panel_host_port_valid()) {
         djui_interactable_set_input_focus(&sInputboxPort->base);
         djui_inputbox_select_all(sInputboxPort);
@@ -87,6 +171,12 @@ static void djui_panel_host_do_host(struct DjuiBase* caller) {
 }
 
 void djui_panel_host_create(struct DjuiBase* caller) {
+#ifdef TARGET_WII_U
+    sLastMenuStateLine[0] = '\0';
+    sLastMenuHighlightLine[0] = '\0';
+#endif
+    djui_menu_state_logf("menu_state: page=host_root opened\n");
+    djui_menu_highlight_logf("host", (gNetworkType == NT_SERVER) ? DLANG(HOST, APPLY) : DLANG(HOST, HOST));
     struct DjuiBase* defaultBase = NULL;
     struct DjuiThreePanel* panel = djui_panel_menu_create(
         (gNetworkType == NT_SERVER) ? DLANG(HOST, SERVER_TITLE) : DLANG(HOST, HOST_TITLE),
@@ -96,6 +186,7 @@ void djui_panel_host_create(struct DjuiBase* caller) {
         #ifdef COOPNET
         char* nChoices[] = { DLANG(HOST, DIRECT_CONNECTION), DLANG(HOST, COOPNET) };
         struct DjuiSelectionbox* selectionbox1 = djui_selectionbox_create(body, DLANG(HOST, NETWORK_SYSTEM), nChoices, 2, &configNetworkSystem, djui_panel_host_network_system_change);
+        djui_interactable_hook_hover(&selectionbox1->base, djui_panel_host_hover_network_system, NULL);
         if (gNetworkType == NT_SERVER) {
             djui_base_set_enabled(&selectionbox1->base, false);
         }
@@ -177,20 +268,25 @@ void djui_panel_host_create(struct DjuiBase* caller) {
             struct DjuiButton* button1 = djui_button_create(&rect2->base, starString, DJUI_BUTTON_STYLE_NORMAL, djui_panel_host_save_create);
             djui_base_set_size(&button1->base, 0.45f, 32);
             djui_base_set_alignment(&button1->base, DJUI_HALIGN_RIGHT, DJUI_VALIGN_TOP);
+            djui_interactable_hook_hover(&button1->base, djui_panel_host_hover_save_slot, NULL);
         }
 
-        djui_button_create(body, DLANG(HOST, SETTINGS), DJUI_BUTTON_STYLE_NORMAL, djui_panel_host_settings_create);
-        djui_button_create(body, DLANG(HOST, MODS), DJUI_BUTTON_STYLE_NORMAL, djui_panel_host_mods_create);
+        struct DjuiButton* buttonSettings = djui_button_create(body, DLANG(HOST, SETTINGS), DJUI_BUTTON_STYLE_NORMAL, djui_panel_host_settings_create);
+        djui_interactable_hook_hover(&buttonSettings->base, djui_panel_host_hover_settings, NULL);
+        struct DjuiButton* buttonMods = djui_button_create(body, DLANG(HOST, MODS), DJUI_BUTTON_STYLE_NORMAL, djui_panel_host_mods_create);
+        djui_interactable_hook_hover(&buttonMods->base, djui_panel_host_hover_mods, NULL);
 
         struct DjuiRect* rect3 = djui_rect_container_create(body, 64);
         {
-            struct DjuiButton* button1 = djui_button_create(&rect3->base, (gNetworkType == NT_SERVER) ? DLANG(MENU, CANCEL) : DLANG(MENU, BACK), DJUI_BUTTON_STYLE_BACK, djui_panel_menu_back);
+            struct DjuiButton* button1 = djui_button_create(&rect3->base, (gNetworkType == NT_SERVER) ? DLANG(MENU, CANCEL) : DLANG(MENU, BACK), DJUI_BUTTON_STYLE_BACK, djui_panel_host_back);
             djui_base_set_size(&button1->base, 0.485f, 64);
             djui_base_set_alignment(&button1->base, DJUI_HALIGN_LEFT, DJUI_VALIGN_TOP);
+            djui_interactable_hook_hover(&button1->base, djui_panel_host_hover_back, NULL);
 
             struct DjuiButton* button2 = djui_button_create(&rect3->base, (gNetworkType == NT_SERVER) ? DLANG(HOST, APPLY) : DLANG(HOST, HOST), DJUI_BUTTON_STYLE_NORMAL, djui_panel_host_do_host);
             djui_base_set_size(&button2->base, 0.485f, 64);
             djui_base_set_alignment(&button2->base, DJUI_HALIGN_RIGHT, DJUI_VALIGN_TOP);
+            djui_interactable_hook_hover(&button2->base, djui_panel_host_hover_host, NULL);
 
             defaultBase = (gNetworkType == NT_SERVER)
                         ? &button1->base

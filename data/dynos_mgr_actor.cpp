@@ -33,6 +33,15 @@ std::map<const void *, ActorGfx> &DynOS_Actor_GetValidActors() {
 }
 
 bool DynOS_Actor_AddCustom(s32 aModIndex, s32 aModFileIndex, const SysPath &aFilename, const char *aActorName) {
+    if (aActorName == NULL || aActorName[0] == '\0') {
+        PrintError("  ERROR: Invalid actor name for custom actor in \"%s\"", aFilename.c_str());
+        return false;
+    }
+    if (aFilename.empty()) {
+        PrintError("  ERROR: Invalid actor path for \"%s\"", aActorName);
+        return false;
+    }
+
     const void* georef = DynOS_Builtin_Actor_GetFromName(aActorName);
 
     std::string actorName = aActorName;
@@ -45,7 +54,27 @@ bool DynOS_Actor_AddCustom(s32 aModIndex, s32 aModFileIndex, const SysPath &aFil
     _GfxData->mModIndex = aModIndex;
     _GfxData->mModFileIndex = aModFileIndex;
 
-    void* geoLayout = (*(_GfxData->mGeoLayouts.end() - 1))->mData;
+    if (_GfxData->mGeoLayouts.Empty()) {
+        PrintError("  ERROR: Actor \"%s\" in \"%s\" has no geo layouts", actorName.c_str(), aFilename.c_str());
+        return false;
+    }
+
+    DataNode<GeoLayout>* geoNode = NULL;
+    for (auto& node : _GfxData->mGeoLayouts) {
+        if (node != NULL && node->mName == actorName.c_str()) {
+            geoNode = node;
+            break;
+        }
+    }
+    if (geoNode == NULL) {
+        geoNode = _GfxData->mGeoLayouts[_GfxData->mGeoLayouts.Count() - 1];
+    }
+    if (geoNode == NULL) {
+        PrintError("  ERROR: Actor \"%s\" has an invalid geo node", actorName.c_str());
+        return false;
+    }
+
+    void* geoLayout = geoNode->mData;
     if (!geoLayout) {
         PrintError("  ERROR: Couldn't load geo layout for \"%s\"", actorName.c_str());
         return false;

@@ -171,7 +171,7 @@ static void gfx_opengl_apply_shader(struct ShaderProgram *prg) {
         glDisable(GL_TEXTURE_2D);
     }
 
-    if (prg->cc.cm.use_fog) {
+    if (gfx_cm_has(&prg->cc.cm, CM_FLAG_USE_FOG)) {
         // blend it on top of normal tris later
         cur_fog_ofs = ofs;
         ofs += 4;
@@ -183,7 +183,7 @@ static void gfx_opengl_apply_shader(struct ShaderProgram *prg) {
         // HACK: if there's a texture and two colors, one of them is likely for speculars or some shit (see mario head)
         //       if there's two colors but no texture, the real color is likely the second one
         // HACKHACK: alpha is 0 in the transition shader (0x01A00045), maybe figure out the flags instead
-        const int vlen = (prg->cc.cm.use_alpha /*&& prg->shader_id != 0x01A00045*/) ? 4 : 3;
+        const int vlen = (gfx_cm_has(&prg->cc.cm, CM_FLAG_USE_ALPHA) /*&& prg->shader_id != 0x01A00045*/) ? 4 : 3;
         const int hack = vlen * (prg->num_inputs > 1);
 
         if (prg->texture_used[1] && prg->ccf.do_mix[0]) {
@@ -212,7 +212,7 @@ static void gfx_opengl_apply_shader(struct ShaderProgram *prg) {
         // we only need to do this once
         prg->enabled = true;
 
-        if (prg->cc.cm.texture_edge) {
+        if (gfx_cm_has(&prg->cc.cm, CM_FLAG_TEXTURE_EDGE)) {
             // (horrible) alpha discard
             glEnable(GL_ALPHA_TEST);
             glAlphaFunc(GL_GREATER, 0.666f);

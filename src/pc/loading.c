@@ -33,6 +33,9 @@ void loading_screen_set_segment_text(const char* text) {
 }
 
 void loading_screen_reset_progress_bar(void) {
+    if (sLoading == NULL || sLoading->loadingBar == NULL) {
+        return;
+    }
     sLoading->loadingBar->smoothValue = 0;
 }
 
@@ -189,7 +192,11 @@ void render_loading_screen(void) {
 void render_rom_setup_screen(void) {
     if (!sLoading) { init_loading_screen(); }
 
+#ifdef TARGET_WII_U
+    loading_screen_set_segment_text("No valid ROM found.\nPlace baserom.us.z64 on SD at /wiiu/apps/sm64coopdx/ or /wiiu/apps/sm64coopdx/roms/ and relaunch.");
+#else
     loading_screen_set_segment_text("No rom detected, drag & drop Super Mario 64 (U) [!].z64 on to this screen");
+#endif
 
     while (!gRomIsValid) {
         WAPI.main_loop(loading_screen_produce_one_frame);

@@ -57,7 +57,7 @@ _G.Arena = {
 -- setup global sync table
 gGlobalSyncTable.gameState = GAME_STATE_ACTIVE
 gGlobalSyncTable.gameMode  = GAME_MODE_DM
-gGlobalSyncTable.currentLevel = gGameLevels[math.random(#gGameLevels)].level
+gGlobalSyncTable.currentLevel = LEVEL_ARENA_SPIRE
 gGlobalSyncTable.roundsPerShuffle = 3
 gGlobalSyncTable.capTeam1 = 0
 gGlobalSyncTable.capTeam2 = 0

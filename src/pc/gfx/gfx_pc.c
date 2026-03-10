@@ -108,7 +108,13 @@ struct GfxDimensions gfx_current_dimensions = { 0 };
 
 static bool dropped_frame = false;
 
-static float buf_vbo[MAX_BUFFERED * (26 * 3)] = { 0.0f }; // 3 vertices in a triangle and 26 floats per vtx
+// 3 vertices per triangle. Desktop path tops out around 26 floats/vtx, while
+// Wii U can reach higher due 4-float texcoords + extended combiner inputs.
+#ifdef TARGET_WII_U
+static float buf_vbo[MAX_BUFFERED * (48 * 3)] = { 0.0f };
+#else
+static float buf_vbo[MAX_BUFFERED * (26 * 3)] = { 0.0f };
+#endif
 static size_t buf_vbo_len = 0;
 static size_t buf_vbo_num_tris = 0;
 
@@ -173,17 +179,19 @@ static void gfx_flush(void) {
 
 static void combine_mode_update_hash(struct CombineMode* cm) {
     uint64_t hash = 5381;
+    const bool use_alpha = gfx_cm_has(cm, CM_FLAG_USE_ALPHA);
+    const bool use_2cycle = gfx_cm_has(cm, CM_FLAG_USE_2CYCLE);
 
     cm->hash = 0;
 
     hash = (hash << 5) + hash + ((u64)cm->rgb1 << 32);
-    if (cm->use_alpha) {
+    if (use_alpha) {
         hash = (hash << 5) + hash + ((u64)cm->alpha1);
     }
 
-    if (cm->use_2cycle) {
+    if (use_2cycle) {
         hash = (hash << 5) + hash + ((u64)cm->rgb2 << 32);
-        if (cm->use_alpha) {
+        if (use_alpha) {
             hash = (hash << 5) + hash + ((u64)cm->alpha2);
         }
     }
@@ -204,6 +212,23 @@ static void color_combiner_update_hash(struct ColorCombiner* cc) {
     cc->hash = hash;
 }
 
+static inline u8 gfx_cm_get_component(const struct CombineMode *cm, int index) {
+    if (cm == NULL || index < 0 || index >= 16) {
+        return 0;
+    }
+
+    const u32 words[4] = {
+        cm->rgb1,
+        cm->alpha1,
+        cm->rgb2,
+        cm->alpha2,
+    };
+
+    const u32 word = words[index >> 2];
+    const u32 shift = (u32)(index & 3) * 8U;
+    return (u8)((word >> shift) & 0xFFU);
+}
+
 static struct ShaderProgram *gfx_lookup_or_create_shader_program(struct ColorCombiner* cc) {
     struct ShaderProgram *prg = gfx_rapi->lookup_shader(cc);
     if (prg == NULL) {
@@ -217,9 +242,14 @@ static struct ShaderProgram *gfx_lookup_or_create_shader_program(struct ColorCom
 static void gfx_generate_cc(struct ColorCombiner *cc) {
     u8 next_input_number = 0;
     u8 input_number[CC_ENUM_MAX] = { 0 };
+    const bool use_2cycle = gfx_cm_has(&cc->cm, CM_FLAG_USE_2CYCLE);
+    // Color combiner entries are reused from a ring buffer; clear mapping/commands
+    // so the hash does not include stale bytes from previous shaders.
+    memset(cc->shader_input_mapping, 0, sizeof(cc->shader_input_mapping));
+    memset(cc->shader_commands, 0, sizeof(cc->shader_commands));
 
     for  (int i = 0; i < SHADER_CMD_LENGTH; i++) {
-        u8 cm_cmd = cc->cm.all_values[i];
+        u8 cm_cmd = gfx_cm_get_component(&cc->cm, i);
         u8 shader_cmd = 0;
         switch (cm_cmd) {
             case CC_0:
@@ -241,10 +271,10 @@ static void gfx_generate_cc(struct ColorCombiner *cc) {
                 shader_cmd = SHADER_TEXEL1A;
                 break;
             case CC_COMBINED:
-                shader_cmd = cc->cm.use_2cycle ? SHADER_COMBINED : SHADER_0;
+                shader_cmd = use_2cycle ? SHADER_COMBINED : SHADER_0;
                 break;
             case CC_COMBINEDA:
-                shader_cmd = cc->cm.use_2cycle ? SHADER_COMBINEDA : SHADER_0;
+                shader_cmd = use_2cycle ? SHADER_COMBINEDA : SHADER_0;
                 break;
             case CC_NOISE:
                 shader_cmd = SHADER_NOISE;
@@ -269,6 +299,7 @@ static void gfx_generate_cc(struct ColorCombiner *cc) {
         }
         cc->shader_commands[i] = shader_cmd;
     }
+
 
     color_combiner_update_hash(cc);
     cc->prg = gfx_lookup_or_create_shader_program(cc);
@@ -332,14 +363,15 @@ static bool gfx_texture_cache_lookup(int tile, struct TextureHashmapNode **n, co
         (*node)->texture_id = gfx_rapi->new_texture();
     }
     gfx_rapi->select_texture(tile, (*node)->texture_id);
-    gfx_rapi->set_sampler_parameters(tile, false, 0, 0);
     (*node)->next = NULL;
     (*node)->texture_addr = orig_addr;
     (*node)->fmt = fmt;
     (*node)->siz = siz;
-    (*node)->cms = 0;
-    (*node)->cmt = 0;
-    (*node)->linear_filter = false;
+    // Defer sampler setup until after the first upload with an active shader.
+    // Sentinel values force the draw path to apply the real sampler state.
+    (*node)->cms = 0xFF;
+    (*node)->cmt = 0xFF;
+    (*node)->linear_filter = true;
     *n = *node;
     return false;
     #undef CMPADDR
@@ -546,21 +578,43 @@ static void import_texture_ci8(int tile) {
 static void import_texture(int tile) {
     tile = tile % RDP_TILES;
     extern s32 dynos_tex_import(void **output, void *ptr, s32 tile, void *grapi, void **hashmap, void *pool, s32 *poolpos, s32 poolsize);
-    if (dynos_tex_import((void **) &rendering_state.textures[tile], (void *) rdp.loaded_texture[tile].addr, tile, gfx_rapi, (void **) gfx_texture_cache.hashmap, (void *) gfx_texture_cache.pool, (int *) &gfx_texture_cache.pool_pos, MAX_CACHED_TEXTURES)) { return; }
+    s32 dynos_pool_pos = (s32)gfx_texture_cache.pool_pos;
+    if (dynos_tex_import((void **) &rendering_state.textures[tile], (void *) rdp.loaded_texture[tile].addr, tile, gfx_rapi, (void **) gfx_texture_cache.hashmap, (void *) gfx_texture_cache.pool, &dynos_pool_pos, MAX_CACHED_TEXTURES)) {
+        gfx_texture_cache.pool_pos = (u32)MAX(0, dynos_pool_pos);
+        return;
+    }
+    gfx_texture_cache.pool_pos = (u32)MAX(0, dynos_pool_pos);
     uint8_t fmt = rdp.texture_tile.fmt;
     uint8_t siz = rdp.texture_tile.siz;
 
-    if (!rdp.loaded_texture[tile].addr) {
+    if (rdp.loaded_texture[tile].addr == NULL || rdp.loaded_texture[tile].size_bytes == 0) {
 #ifdef DEVELOPMENT
 /*
         fprintf(stderr, "NULL texture: tile %d, format %d/%d, size %d\n",
                 tile, (int)fmt, (int)siz, (int)rdp.loaded_texture[tile].size_bytes);
 */
 #endif
+        rendering_state.textures[tile] = NULL;
         return;
     }
 
-    if (gfx_texture_cache_lookup(tile, &rendering_state.textures[tile], rdp.loaded_texture[tile].addr, fmt, siz)) {
+    if (rdp.texture_tile.line_size_bytes == 0) {
+        u32 tex_width = (rdp.texture_tile.lrs - rdp.texture_tile.uls + 4) / 4;
+        if (tex_width == 0) {
+            tex_width = 1;
+        }
+
+        switch (rdp.texture_tile.siz) {
+            case G_IM_SIZ_4b:  rdp.texture_tile.line_size_bytes = MAX(1, tex_width >> 1); break;
+            case G_IM_SIZ_8b:  rdp.texture_tile.line_size_bytes = tex_width; break;
+            case G_IM_SIZ_16b: rdp.texture_tile.line_size_bytes = tex_width * 2; break;
+            case G_IM_SIZ_32b: rdp.texture_tile.line_size_bytes = tex_width * 4; break;
+            default: break;
+        }
+    }
+
+    const bool cache_hit = gfx_texture_cache_lookup(tile, &rendering_state.textures[tile], rdp.loaded_texture[tile].addr, fmt, siz);
+    if (cache_hit) {
         return;
     }
 
@@ -1001,6 +1055,7 @@ static void OPTIMIZE_O3 gfx_sp_vertex(size_t n_vertices, size_t dest_index, cons
         if (!(rsp.geometry_mode & G_FRESNEL_ALPHA_EXT)) {
             d->color.a = v->cn[3];
         }
+
     }
 }
 
@@ -1089,22 +1144,23 @@ static void OPTIMIZE_O3 gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t 
 
     struct CombineMode* cm = &rdp.combine_mode;
 
-    cm->use_alpha    = (rdp.other_mode_l & (G_BL_A_MEM << 18))        == 0;
-    cm->texture_edge = (rdp.other_mode_l & CVG_X_ALPHA)               == CVG_X_ALPHA;
-    cm->use_dither   = (rdp.other_mode_l & G_AC_DITHER)               == G_AC_DITHER;
-    cm->use_2cycle   = (rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE;
-    cm->use_fog      = (rdp.other_mode_l >> 30)                       == G_BL_CLR_FOG;
-    cm->light_map    = (rsp.geometry_mode & G_LIGHT_MAP_EXT)          == G_LIGHT_MAP_EXT;
+    cm->flags = 0;
+    gfx_cm_set(cm, CM_FLAG_USE_ALPHA, (rdp.other_mode_l & (G_BL_A_MEM << 18)) == 0);
+    gfx_cm_set(cm, CM_FLAG_TEXTURE_EDGE, (rdp.other_mode_l & CVG_X_ALPHA) == CVG_X_ALPHA);
+    gfx_cm_set(cm, CM_FLAG_USE_DITHER, (rdp.other_mode_l & G_AC_DITHER) == G_AC_DITHER);
+    gfx_cm_set(cm, CM_FLAG_USE_2CYCLE, (rdp.other_mode_h & (3U << G_MDSFT_CYCLETYPE)) == G_CYC_2CYCLE);
+    gfx_cm_set(cm, CM_FLAG_USE_FOG, (rdp.other_mode_l >> 30) == G_BL_CLR_FOG);
+    gfx_cm_set(cm, CM_FLAG_LIGHT_MAP, (rsp.geometry_mode & G_LIGHT_MAP_EXT) == G_LIGHT_MAP_EXT);
 
-    if (cm->texture_edge) {
-        cm->use_alpha = true;
+    if (gfx_cm_has(cm, CM_FLAG_TEXTURE_EDGE)) {
+        gfx_cm_set(cm, CM_FLAG_USE_ALPHA, true);
     }
 
     // hack: disable 2cycle if it uses a second texture that doesn't exist
     // this is because old rom hacks were ported assuming that 2cycle didn't exist
     // and were ported incorrectly
-    if (!rdp.loaded_texture[1].addr && cm->use_2cycle && gfx_cm_uses_second_texture(cm)) {
-        cm->use_2cycle = false;
+    if (!rdp.loaded_texture[1].addr && gfx_cm_has(cm, CM_FLAG_USE_2CYCLE) && gfx_cm_uses_second_texture(cm)) {
+        gfx_cm_set(cm, CM_FLAG_USE_2CYCLE, false);
     }
 
     struct ColorCombiner *comb = gfx_lookup_or_create_color_combiner(cm);
@@ -1117,18 +1173,26 @@ static void OPTIMIZE_O3 gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t 
         gfx_rapi->load_shader(prg);
         rendering_state.shader_program = prg;
     }
-    if (cm->use_alpha != rendering_state.alpha_blend) {
+    if (gfx_cm_has(cm, CM_FLAG_USE_ALPHA) != rendering_state.alpha_blend) {
         gfx_flush();
-        gfx_rapi->set_use_alpha(cm->use_alpha);
-        rendering_state.alpha_blend = cm->use_alpha;
+        gfx_rapi->set_use_alpha(gfx_cm_has(cm, CM_FLAG_USE_ALPHA));
+        rendering_state.alpha_blend = gfx_cm_has(cm, CM_FLAG_USE_ALPHA);
     }
     uint8_t num_inputs;
     bool used_textures[2];
     gfx_rapi->shader_get_info(prg, &num_inputs, used_textures);
 
+    bool missing_texture_binding = false;
     for (int32_t i = 0; i < 2; i++) {
         if (used_textures[i]) {
             if (rdp.textures_changed[i]) {
+                gfx_flush();
+                import_texture(i);
+                rdp.textures_changed[i] = false;
+            }
+            if (rendering_state.textures[i] == NULL
+                && rdp.loaded_texture[i].addr != NULL
+                && rdp.loaded_texture[i].size_bytes != 0) {
                 gfx_flush();
                 import_texture(i);
                 rdp.textures_changed[i] = false;
@@ -1143,13 +1207,21 @@ static void OPTIMIZE_O3 gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t 
                     tex->cms = rdp.texture_tile.cms;
                     tex->cmt = rdp.texture_tile.cmt;
                 }
+            } else {
+                missing_texture_binding = true;
             }
         }
+    }
+
+    if (missing_texture_binding) {
+        return;
     }
 
     bool use_texture = used_textures[0] || used_textures[1];
     uint32_t tex_width = (rdp.texture_tile.lrs - rdp.texture_tile.uls + 4) / 4;
     uint32_t tex_height = (rdp.texture_tile.lrt - rdp.texture_tile.ult + 4) / 4;
+    if (tex_width == 0) { tex_width = 1; }
+    if (tex_height == 0) { tex_height = 1; }
 
     bool z_is_from_0_to_1 = gfx_rapi->z_is_from_0_to_1();
 
@@ -1163,19 +1235,31 @@ static void OPTIMIZE_O3 gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t 
         buf_vbo[buf_vbo_len++] = z;
         buf_vbo[buf_vbo_len++] = w;
 
+        float tex_u = 0.0f;
+        float tex_v = 0.0f;
         if (use_texture) {
-            float u = (v_arr[i]->u - rdp.texture_tile.uls * 8) / 32.0f;
-            float v = (v_arr[i]->v - rdp.texture_tile.ult * 8) / 32.0f;
+            tex_u = (v_arr[i]->u - rdp.texture_tile.uls * 8) / 32.0f;
+            tex_v = (v_arr[i]->v - rdp.texture_tile.ult * 8) / 32.0f;
             if ((rdp.other_mode_h & (3U << G_MDSFT_TEXTFILT)) != G_TF_POINT) {
                 // Linear filter adds 0.5f to the coordinates (why?)
-                u += 0.5f;
-                v += 0.5f;
+                tex_u += 0.5f;
+                tex_v += 0.5f;
             }
-            buf_vbo[buf_vbo_len++] = u / tex_width;
-            buf_vbo[buf_vbo_len++] = v / tex_height;
+            tex_u /= tex_width;
+            tex_v /= tex_height;
+        }
+        if (use_texture) {
+            buf_vbo[buf_vbo_len++] = tex_u;
+            buf_vbo[buf_vbo_len++] = tex_v;
+#ifdef TARGET_WII_U
+            // GX2 texture attributes are consumed as 4-float slots; keep the
+            // donor padding so generated/precompiled shaders see the expected stride.
+            buf_vbo[buf_vbo_len++] = 0.0f;
+            buf_vbo[buf_vbo_len++] = 0.0f;
+#endif
         }
 
-        if (cm->use_fog) {
+        if (gfx_cm_has(cm, CM_FLAG_USE_FOG)) {
             f32 r = gFogColor[0] / 255.0f;
             f32 g = gFogColor[1] / 255.0f;
             f32 b = gFogColor[2] / 255.0f;
@@ -1185,16 +1269,18 @@ static void OPTIMIZE_O3 gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t 
             buf_vbo[buf_vbo_len++] = v_arr[i]->fog_z / 255.0f; // fog factor (not alpha)
         }
 
-        if (cm->light_map) {
+        if (gfx_cm_has(cm, CM_FLAG_LIGHT_MAP)) {
+#ifndef TARGET_WII_U
             struct RGBA* col = &v_arr[i]->color;
             buf_vbo[buf_vbo_len++] = ( (((uint16_t)col->g) << 8) | ((uint16_t)col->r) ) / 65535.0f;
             buf_vbo[buf_vbo_len++] = 1.0f - (( (((uint16_t)col->a) << 8) | ((uint16_t)col->b) ) / 65535.0f);
+#endif
         }
 
         for (int j = 0; j < num_inputs; j++) {
             struct RGBA *color = NULL;
             struct RGBA tmp = { 0 };
-            for (int a = 0; a < (cm->use_alpha ? 2 : 1 ); a++) {
+            for (int a = 0; a < (gfx_cm_has(cm, CM_FLAG_USE_ALPHA) ? 2 : 1 ); a++) {
                 u8 mapping = comb->shader_input_mapping[j];
 
                 switch (mapping) {
@@ -1237,8 +1323,13 @@ static void OPTIMIZE_O3 gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t 
                     buf_vbo[buf_vbo_len++] = color->r / 255.0f;
                     buf_vbo[buf_vbo_len++] = color->g / 255.0f;
                     buf_vbo[buf_vbo_len++] = color->b / 255.0f;
+#if defined(TARGET_WII_U) || defined(ENABLE_OPENGL)
+                    if (!gfx_cm_has(cm, CM_FLAG_USE_ALPHA)) {
+                        buf_vbo[buf_vbo_len++] = 1.0f;
+                    }
+#endif
                 } else {
-                    if (cm->use_fog && (color == &v_arr[i]->color || cm->light_map)) {
+                    if (gfx_cm_has(cm, CM_FLAG_USE_FOG) && (color == &v_arr[i]->color || gfx_cm_has(cm, CM_FLAG_LIGHT_MAP))) {
                         // Shade alpha is 100% for fog
                         buf_vbo[buf_vbo_len++] = 1.0f;
                     } else {
@@ -2038,11 +2129,12 @@ void gfx_end_frame_render(void) {
 }
 
 void gfx_display_frame(void) {
-    gfx_wapi->swap_buffers_begin();
-    if (!dropped_frame) {
-        gfx_rapi->finish_render();
-        gfx_wapi->swap_buffers_end();
+    if (dropped_frame) {
+        return;
     }
+    gfx_wapi->swap_buffers_begin();
+    gfx_rapi->finish_render();
+    gfx_wapi->swap_buffers_end();
 }
 
 void gfx_end_frame(void) {

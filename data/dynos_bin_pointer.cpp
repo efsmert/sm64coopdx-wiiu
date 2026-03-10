@@ -347,7 +347,27 @@ static void *GetPointerFromData(GfxData *aGfxData, const String &aPtrName, u32 a
     for (auto &_Node : aGfxData->mVertices) {
         if (_Node->mName == aPtrName) {
             *outFlags |= _Node->mFlags;
-            return (void *) (_Node->mData + aPtrData);
+            // Compatibility handling:
+            // Legacy/custom packs commonly encode these as element indices.
+            // Newer serialization can carry byte offsets.
+            const u32 count = _Node->mSize;
+            const u32 elemSize = (u32) sizeof(Vtx);
+            const u32 byteSize = count * elemSize;
+            if (aPtrData < count) {
+                return (void *) (_Node->mData + aPtrData);
+            }
+            if (elemSize != 0 && (aPtrData % elemSize) == 0) {
+                u32 elemOffset = aPtrData / elemSize;
+                if (elemOffset < count) {
+                    return (void *) (_Node->mData + elemOffset);
+                }
+            }
+            if (aPtrData < byteSize) {
+                return (void *) ((u8 *) _Node->mData + aPtrData);
+            }
+            sys_fatal("Vertex pointer offset out of range: %s offset=%u count=%u elemSize=%u",
+                      aPtrName.begin(), aPtrData, count, elemSize);
+            return (void *) _Node->mData;
         }
     }
 
@@ -361,7 +381,26 @@ static void *GetPointerFromData(GfxData *aGfxData, const String &aPtrName, u32 a
     // Level scripts
     for (auto &_Node : aGfxData->mLevelScripts) {
         if (_Node->mName == aPtrName) {
-            return (void *) (_Node->mData + aPtrData);
+            // Compatibility handling:
+            // support both element-index and byte-offset encodings.
+            const u32 count = _Node->mSize;
+            const u32 elemSize = (u32) sizeof(LevelScript);
+            const u32 byteSize = count * elemSize;
+            if (aPtrData < count) {
+                return (void *) (_Node->mData + aPtrData);
+            }
+            if (elemSize != 0 && (aPtrData % elemSize) == 0) {
+                u32 elemOffset = aPtrData / elemSize;
+                if (elemOffset < count) {
+                    return (void *) (_Node->mData + elemOffset);
+                }
+            }
+            if (aPtrData < byteSize) {
+                return (void *) ((u8 *) _Node->mData + aPtrData);
+            }
+            sys_fatal("Level script pointer offset out of range: %s offset=%u count=%u elemSize=%u",
+                      aPtrName.begin(), aPtrData, count, elemSize);
+            return (void *) _Node->mData;
         }
     }
 

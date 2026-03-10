@@ -130,7 +130,7 @@ void gfx_direct3d_common_build_shader(char buf[4096], size_t& len, size_t& num_f
 
     if (include_root_signature) {
         append_str(buf, &len, "#define RS \"RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | DENY_VERTEX_SHADER_ROOT_ACCESS)");
-        if ((cc.cm.use_alpha && cc.cm.use_dither) || ccf.do_noise) {
+        if ((gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) && gfx_cm_has(&cc.cm, CM_FLAG_USE_DITHER)) || ccf.do_noise) {
             append_str(buf, &len, ",CBV(b0, visibility = SHADER_VISIBILITY_PIXEL)");
         }
         if (ccf.used_textures[0]) {
@@ -150,20 +150,20 @@ void gfx_direct3d_common_build_shader(char buf[4096], size_t& len, size_t& num_f
         append_line(buf, &len, "    float2 uv : TEXCOORD;");
         num_floats += 2;
     }
-    if ((cc.cm.use_alpha && cc.cm.use_dither) || ccf.do_noise) {
+    if ((gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) && gfx_cm_has(&cc.cm, CM_FLAG_USE_DITHER)) || ccf.do_noise) {
         append_line(buf, &len, "    float4 screenPos : TEXCOORD1;");
     }
-    if (cc.cm.use_fog) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_USE_FOG)) {
         append_line(buf, &len, "    float4 fog : FOG;");
         num_floats += 4;
     }
-    if (cc.cm.light_map) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_LIGHT_MAP)) {
         append_line(buf, &len, "    float2 lightmap : LIGHTMAP;");
         num_floats += 2;
     }
     for (int32_t i = 0; i < ccf.num_inputs; i++) {
-        len += sprintf(buf + len, "    float%d input%d : INPUT%d;\r\n", cc.cm.use_alpha ? 4 : 3, i + 1, i);
-        num_floats += cc.cm.use_alpha ? 4 : 3;
+        len += sprintf(buf + len, "    float%d input%d : INPUT%d;\r\n", gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) ? 4 : 3, i + 1, i);
+        num_floats += gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) ? 4 : 3;
     }
     append_line(buf, &len, "};");
 
@@ -180,7 +180,7 @@ void gfx_direct3d_common_build_shader(char buf[4096], size_t& len, size_t& num_f
 
     // Constant buffer and random function
 
-    if ((cc.cm.use_alpha && cc.cm.use_dither) || ccf.do_noise) {
+    if ((gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) && gfx_cm_has(&cc.cm, CM_FLAG_USE_DITHER)) || ccf.do_noise) {
         append_line(buf, &len, "cbuffer PerFrameCB : register(b0) {");
         append_line(buf, &len, "    uint noise_frame;");
         append_line(buf, &len, "    float2 noise_scale;");
@@ -221,28 +221,28 @@ void gfx_direct3d_common_build_shader(char buf[4096], size_t& len, size_t& num_f
     if (ccf.used_textures[0] || ccf.used_textures[1]) {
         append_str(buf, &len, ", float2 uv : TEXCOORD");
     }
-    if (cc.cm.use_fog) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_USE_FOG)) {
         append_str(buf, &len, ", float4 fog : FOG");
     }
-    if (cc.cm.light_map) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_LIGHT_MAP)) {
         append_str(buf, &len, ", float2 lightmap : LIGHTMAP");
     }
     for (int32_t i = 0; i < ccf.num_inputs; i++) {
-        len += sprintf(buf + len, ", float%d input%d : INPUT%d", cc.cm.use_alpha ? 4 : 3, i + 1, i);
+        len += sprintf(buf + len, ", float%d input%d : INPUT%d", gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) ? 4 : 3, i + 1, i);
     }
     append_line(buf, &len, ") {");
     append_line(buf, &len, "    PSInput result;");
     append_line(buf, &len, "    result.position = position;");
-    if ((cc.cm.use_alpha && cc.cm.use_dither) || ccf.do_noise) {
+    if ((gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) && gfx_cm_has(&cc.cm, CM_FLAG_USE_DITHER)) || ccf.do_noise) {
         append_line(buf, &len, "    result.screenPos = position;");
     }
     if (ccf.used_textures[0] || ccf.used_textures[1]) {
         append_line(buf, &len, "    result.uv = uv;");
     }
-    if (cc.cm.use_fog) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_USE_FOG)) {
         append_line(buf, &len, "    result.fog = fog;");
     }
-    if (cc.cm.light_map) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_LIGHT_MAP)) {
         append_line(buf, &len, "    result.lightmap = lightmap;");
     }
     for (int32_t i = 0; i < ccf.num_inputs; i++) {
@@ -257,7 +257,7 @@ void gfx_direct3d_common_build_shader(char buf[4096], size_t& len, size_t& num_f
     }
     append_line(buf, &len, "float4 PSMain(PSInput input) : SV_TARGET {");
 
-    if ((cc.cm.use_alpha && cc.cm.use_dither) || ccf.do_noise) {
+    if ((gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) && gfx_cm_has(&cc.cm, CM_FLAG_USE_DITHER)) || ccf.do_noise) {
         append_line(buf, &len, "    float2 coords = (input.screenPos.xy / input.screenPos.w) * noise_scale;");
         append_line(buf, &len, "    float noise = round(random(float3(floor(coords), noise_frame)));");
     }
@@ -274,7 +274,7 @@ void gfx_direct3d_common_build_shader(char buf[4096], size_t& len, size_t& num_f
         }
     }
     if (ccf.used_textures[1]) {
-        if (cc.cm.light_map) {
+        if (gfx_cm_has(&cc.cm, CM_FLAG_LIGHT_MAP)) {
             if (three_point_filtering) {
                 append_line(buf, &len, "    float4 texVal1;");
                 append_line(buf, &len, "    if (textures[1].linear_filtering)");
@@ -298,42 +298,42 @@ void gfx_direct3d_common_build_shader(char buf[4096], size_t& len, size_t& num_f
         }
     }
 
-    append_str(buf, &len, cc.cm.use_alpha ? "    float4 texel = " : "    float3 texel = ");
-    for (int i = 0; i < (cc.cm.use_2cycle + 1); i++) {
+    append_str(buf, &len, gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) ? "    float4 texel = " : "    float3 texel = ");
+    for (int i = 0; i < (gfx_cm_has(&cc.cm, CM_FLAG_USE_2CYCLE) + 1); i++) {
         uint8_t* cmd = &cc.shader_commands[i * 8];
-        if (!ccf.color_alpha_same[i] && cc.cm.use_alpha) {
+        if (!ccf.color_alpha_same[i] && gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA)) {
             append_str(buf, &len, "float4(");
             append_formula(buf, &len, cmd, ccf.do_single[i*2+0], ccf.do_multiply[i*2+0], ccf.do_mix[i*2+0], false, false, true);
             append_str(buf, &len, ", ");
             append_formula(buf, &len, cmd, ccf.do_single[i*2+1], ccf.do_multiply[i*2+1], ccf.do_mix[i*2+1], true, true, true);
             append_str(buf, &len, ")");
         } else {
-            append_formula(buf, &len, cmd, ccf.do_single[i*2+0], ccf.do_multiply[i*2+0], ccf.do_mix[i*2+0], cc.cm.use_alpha, false, cc.cm.use_alpha);
+            append_formula(buf, &len, cmd, ccf.do_single[i*2+0], ccf.do_multiply[i*2+0], ccf.do_mix[i*2+0], gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA), false, gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA));
         }
         append_line(buf, &len, ";");
 
-        if (i == 0 && cc.cm.use_2cycle) {
+        if (i == 0 && gfx_cm_has(&cc.cm, CM_FLAG_USE_2CYCLE)) {
             append_str(buf, &len, "texel = ");
         }
     }
 
-    if (cc.cm.texture_edge && cc.cm.use_alpha) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_TEXTURE_EDGE) && gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA)) {
         append_line(buf, &len, "    if (texel.a > 0.3) texel.a = 1.0; else discard;");
     }
     // TODO discard if alpha is 0?
-    if (cc.cm.use_fog) {
-        if (cc.cm.use_alpha) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_USE_FOG)) {
+        if (gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA)) {
             append_line(buf, &len, "    texel = float4(lerp(texel.rgb, input.fog.rgb, input.fog.a), texel.a);");
         } else {
             append_line(buf, &len, "    texel = lerp(texel, input.fog.rgb, input.fog.a);");
         }
     }
 
-    if (cc.cm.use_alpha && cc.cm.use_dither) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA) && gfx_cm_has(&cc.cm, CM_FLAG_USE_DITHER)) {
         append_line(buf, &len, "    texel.a *= noise;");
     }
 
-    if (cc.cm.use_alpha) {
+    if (gfx_cm_has(&cc.cm, CM_FLAG_USE_ALPHA)) {
         append_line(buf, &len, "    return texel;");
     } else {
         append_line(buf, &len, "    return float4(texel, 1.0);");

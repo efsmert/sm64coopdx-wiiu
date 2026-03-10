@@ -1,3 +1,5 @@
+#include <stdlib.h>
+
 #include "sm64.h"
 #include "types.h"
 #include "course_table.h"
@@ -41,17 +43,32 @@ struct CourseActNames gReplacedCourseActNameTable[COURSE_END + 1] = { 0 };
 
 static bool sSmluaTextUtilsInited = false;
 
-#define smlua_text_utils_init_from_vanilla(obj, tableFunc, tableOrigFunc, tableOffset) { \
-    char buffer[50]; \
-    convert_string_sm64_to_ascii(buffer, tableOrigFunc()[tableOffset]); \
-    snprintf(obj.name.value, sizeof(obj.name.value), "%s", buffer); \
-    obj.name.get_table = tableFunc; \
-    obj.name.offset = tableOffset; \
-    snprintf(obj.orig.value, sizeof(obj.orig.value), "%s", buffer); \
-    obj.orig.get_table = tableOrigFunc; \
-    obj.orig.offset = tableOffset; \
-    tableFunc()[tableOffset] = tableOrigFunc()[tableOffset]; \
+static void smlua_text_utils_init_from_vanilla_impl(
+    struct ReplacedName* obj, void** (*tableFunc)(void), void** (*tableOrigFunc)(void), s16 tableOffset
+) {
+    const u8* original = (const u8*)tableOrigFunc()[tableOffset];
+    char* buffer = convert_string_sm64_to_ascii(NULL, original);
+    bool shouldFreeBuffer = (buffer != NULL);
+
+    if (buffer == NULL) {
+        buffer = "";
+    }
+
+    snprintf(obj->name.value, sizeof(obj->name.value), "%s", buffer);
+    obj->name.get_table = tableFunc;
+    obj->name.offset = tableOffset;
+    snprintf(obj->orig.value, sizeof(obj->orig.value), "%s", buffer);
+    obj->orig.get_table = tableOrigFunc;
+    obj->orig.offset = tableOffset;
+    tableFunc()[tableOffset] = tableOrigFunc()[tableOffset];
+
+    if (shouldFreeBuffer) {
+        free(buffer);
+    }
 }
+
+#define smlua_text_utils_init_from_vanilla(obj, tableFunc, tableOrigFunc, tableOffset) \
+    smlua_text_utils_init_from_vanilla_impl(&(obj), tableFunc, tableOrigFunc, tableOffset)
 
 // Save all vanilla act names and course names
 void smlua_text_utils_init(void) {
