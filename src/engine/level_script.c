@@ -68,10 +68,51 @@ static s16 sScriptStatus;
 static s32 sRegister;
 static struct LevelCommand *sCurrentCmd;
 
+#ifdef TARGET_WII_U
+static inline s16 level_cmd_read_s16(u32 offset) {
+    s16 value = CMD_GET(s16, offset);
+    if (gLevelScriptModIndex >= 0) {
+        value = (s16) __builtin_bswap16((u16) value);
+    }
+    return value;
+}
+
+static inline u16 level_cmd_read_u16(u32 offset) {
+    u16 value = CMD_GET(u16, offset);
+    if (gLevelScriptModIndex >= 0) {
+        value = __builtin_bswap16(value);
+    }
+    return value;
+}
+
+static inline s32 level_cmd_read_s32(u32 offset) {
+    s32 value = CMD_GET(s32, offset);
+    if (gLevelScriptModIndex >= 0) {
+        value = (s32) __builtin_bswap32((u32) value);
+    }
+    return value;
+}
+
+static inline u32 level_cmd_read_u32(u32 offset) {
+    u32 value = CMD_GET(u32, offset);
+    if (gLevelScriptModIndex >= 0) {
+        value = __builtin_bswap32(value);
+    }
+    return value;
+}
+#endif
+
+#ifdef TARGET_WII_U
+#define CMD_GET_S16(offset) level_cmd_read_s16(offset)
+#define CMD_GET_U16(offset) level_cmd_read_u16(offset)
+#define CMD_GET_S32(offset) level_cmd_read_s32(offset)
+#define CMD_GET_U32(offset) level_cmd_read_u32(offset)
+#else
 #define CMD_GET_S16(offset) CMD_GET(s16, offset)
 #define CMD_GET_U16(offset) CMD_GET(u16, offset)
 #define CMD_GET_S32(offset) CMD_GET(s32, offset)
 #define CMD_GET_U32(offset) CMD_GET(u32, offset)
+#endif
 
 static u8 sFinishedLoadingPerm = false;
 

@@ -18,10 +18,10 @@ static const uint8_t reg_map[] = {
     _R8, // SHADER_INPUT_6
     _R9, // SHADER_INPUT_7
     _R10, // SHADER_INPUT_8
-    _R11, // SHADER_TEXEL0
-    _R11, // SHADER_TEXEL0A
-    _R12, // SHADER_TEXEL1
-    _R12, // SHADER_TEXEL1A
+    _R12, // SHADER_TEXEL0
+    _R12, // SHADER_TEXEL0A
+    _R13, // SHADER_TEXEL1
+    _R13, // SHADER_TEXEL1A
     ALU_SRC_1, // SHADER_1
     _R1, // SHADER_COMBINED
     _R1, // SHADER_COMBINEDA
@@ -32,12 +32,18 @@ static uint32_t gx2_count_ps_inputs(const struct CCFeatures *cc_features) {
     if (cc_features == NULL) {
         return 2;
     }
-    return 2u + (uint32_t)cc_features->num_inputs;
+    return 2u + (uint32_t)cc_features->num_inputs + (cc_features->opt_light_map ? 1u : 0u);
 }
 
 static uint8_t gx2_ps_reg_for_input(const struct CCFeatures *cc_features, uint8_t shader_input) {
+    const uint8_t input_index = (uint8_t)(shader_input - SHADER_INPUT_1);
+    const uint8_t base_reg = (cc_features != NULL && cc_features->opt_light_map) ? _R4 : _R3;
+    return (uint8_t)(base_reg + input_index);
+}
+
+static uint8_t gx2_lightmap_ps_reg(const struct CCFeatures *cc_features) {
     (void)cc_features;
-    return reg_map[shader_input];
+    return _R3;
 }
 
 static uint8_t gx2_map_shader_src_with_features(const struct CCFeatures *cc_features, uint8_t src, bool *src_alpha) {
@@ -283,6 +289,7 @@ static const uint64_t noise_instructions[] = {
 
 static GX2UniformVar uniformVars[] = {
     { "window_params", GX2_SHADER_VAR_TYPE_FLOAT2, 1, 0, -1, },
+    { "uLightmapColor", GX2_SHADER_VAR_TYPE_FLOAT3, 1, 4, -1, },
 };
 
 static GX2SamplerVar samplerVars[] = {
@@ -309,6 +316,22 @@ static int generatePixelShader(GX2PixelShader *psh, struct CCFeatures *cc_featur
     // alu0
     static const uint32_t alu0_offset = 32;
     uint64_t *cur_buf = program_buf + alu0_offset;
+    if (cc_features->opt_light_map && cc_features->used_textures[0] && cc_features->used_textures[1]) {
+        const uint8_t texel0_reg = reg_map[SHADER_TEXEL0];
+        const uint8_t texel1_reg = reg_map[SHADER_TEXEL1];
+        ADD_INSTR(
+            // Match the desktop lightmap path before the combiner formula runs.
+            ALU_MUL(texel0_reg, _x, texel0_reg, _x, _C(1), _x),
+            ALU_MUL(texel0_reg, _y, texel0_reg, _y, _C(1), _y),
+            ALU_MUL(texel0_reg, _z, texel0_reg, _z, _C(1), _z)
+            ALU_LAST,
+
+            ALU_MULADD(texel1_reg, _x, texel1_reg, _x, texel1_reg, _x, texel1_reg, _x),
+            ALU_MULADD(texel1_reg, _y, texel1_reg, _y, texel1_reg, _y, texel1_reg, _y),
+            ALU_MULADD(texel1_reg, _z, texel1_reg, _z, texel1_reg, _z, texel1_reg, _z)
+            ALU_LAST,
+        );
+    }
     const uint32_t num_cycles = cc_features->opt_2cycle ? 2u : 1u;
     for (uint32_t cycle = 0; cycle < num_cycles; ++cycle) {
         const uint32_t cmd_offset = cycle * 8u;
@@ -393,7 +416,8 @@ static int generatePixelShader(GX2PixelShader *psh, struct CCFeatures *cc_featur
         cur_tex_offset += sizeof(tex0_buf) / sizeof(uint64_t);
     }
     if (cc_features->used_textures[1]) {
-        uint64_t tex1_buf[] = { TEX_SAMPLE(reg_map[SHADER_TEXEL1],_x, _y, _z, _w, _R1, _x, _y, _0, _x, _t1, _s1) };
+        const uint8_t tex1_coord_reg = cc_features->opt_light_map ? gx2_lightmap_ps_reg(cc_features) : _R1;
+        uint64_t tex1_buf[] = { TEX_SAMPLE(reg_map[SHADER_TEXEL1],_x, _y, _z, _w, tex1_coord_reg, _x, _y, _0, _x, _t1, _s1) };
         memcpy(program_buf + cur_tex_offset, tex1_buf, sizeof(tex1_buf));
         cur_tex_offset += sizeof(tex1_buf) / sizeof(uint64_t);
     }
@@ -420,8 +444,9 @@ static int generatePixelShader(GX2PixelShader *psh, struct CCFeatures *cc_featur
     // regs
     const uint32_t num_ps_inputs = gx2_count_ps_inputs(cc_features);
 
-    // Reserve a fixed PS layout: texcoord in R1, fog in R2, combiner inputs in
-    // R3-R10, sampled texels in R11/R12.
+    // Reserve a fixed PS layout: texcoord in R1, fog in R2, optional lightmap
+    // UVs in R3, combiner inputs in R3-R10 (or R4-R11 when lightmaps are
+    // enabled), and sampled texels in R12/R13.
     psh->regs.sq_pgm_resources_ps = 14; // num_gprs
     psh->regs.sq_pgm_exports_ps = 2; // export_mode
     psh->regs.spi_ps_in_control_0 = (num_ps_inputs + 1) // num_interp
@@ -465,14 +490,15 @@ static GX2AttribVar attribVars[] = {
     { "aVtxPos",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 0},
     { "aTexCoord", GX2_SHADER_VAR_TYPE_FLOAT2, 0, 1},
     { "aFog",      GX2_SHADER_VAR_TYPE_FLOAT4, 0, 2},
-    { "aInput1",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 3},
-    { "aInput2",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 4},
-    { "aInput3",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 5},
-    { "aInput4",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 6},
-    { "aInput5",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 7},
-    { "aInput6",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 8},
-    { "aInput7",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 9},
-    { "aInput8",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 10},
+    { "aLightMap", GX2_SHADER_VAR_TYPE_FLOAT2, 0, 3},
+    { "aInput1",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 4},
+    { "aInput2",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 5},
+    { "aInput3",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 6},
+    { "aInput4",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 7},
+    { "aInput5",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 8},
+    { "aInput6",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 9},
+    { "aInput7",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 10},
+    { "aInput8",   GX2_SHADER_VAR_TYPE_FLOAT4, 0, 11},
 };
 
 static int generateVertexShader(GX2VertexShader *vsh, struct CCFeatures *cc_features) {
@@ -518,14 +544,17 @@ static int generateVertexShader(GX2VertexShader *vsh, struct CCFeatures *cc_feat
     // num outputs minus 1
     vsh->regs.spi_vs_out_config = ((num_ps_inputs > 0 ? num_ps_inputs - 1 : 0) << 1);
 
-    vsh->regs.num_spi_vs_out_id = 3;
+    vsh->regs.num_spi_vs_out_id = (num_ps_inputs + 3u) / 4u;
     memset(vsh->regs.spi_vs_out_id, 0xff, sizeof(vsh->regs.spi_vs_out_id));
-    vsh->regs.spi_vs_out_id[0] = (0) | (1 << 8) | (2 << 16) | (3 << 24);
-    vsh->regs.spi_vs_out_id[1] = (4) | (5 << 8) | (0xff << 16) | (0xff << 24);
-    vsh->regs.spi_vs_out_id[2] = (6) | (7 << 8) | (8 << 16) | (9 << 24);
+    for (uint32_t i = 0; i < num_ps_inputs; ++i) {
+        const uint32_t word = i / 4u;
+        const uint32_t shift = (i % 4u) * 8u;
+        vsh->regs.spi_vs_out_id[word] &= ~(0xffu << shift);
+        vsh->regs.spi_vs_out_id[word] |= i << shift;
+    }
 
-    vsh->regs.sq_vtx_semantic_clear = ~((1 << 11) - 1);
-    vsh->regs.num_sq_vtx_semantic = 11;
+    vsh->regs.sq_vtx_semantic_clear = ~((1 << 12) - 1);
+    vsh->regs.num_sq_vtx_semantic = 12;
     memset(vsh->regs.sq_vtx_semantic, 0xff, sizeof(vsh->regs.sq_vtx_semantic));
     // aVtxPos
     vsh->regs.sq_vtx_semantic[0] = 0;
@@ -533,22 +562,17 @@ static int generateVertexShader(GX2VertexShader *vsh, struct CCFeatures *cc_feat
     vsh->regs.sq_vtx_semantic[1] = 1;
     // aFog
     vsh->regs.sq_vtx_semantic[2] = 2;
-    // aInput1
-    vsh->regs.sq_vtx_semantic[3] = 3;
-    // aInput2
-    vsh->regs.sq_vtx_semantic[4] = 4;
-    // aInput3
-    vsh->regs.sq_vtx_semantic[5] = 5;
-    // aInput4
-    vsh->regs.sq_vtx_semantic[6] = 6;
-    // aInput5
-    vsh->regs.sq_vtx_semantic[7] = 7;
-    // aInput6
-    vsh->regs.sq_vtx_semantic[8] = 8;
-    // aInput7
-    vsh->regs.sq_vtx_semantic[9] = 9;
-    // aInput8
-    vsh->regs.sq_vtx_semantic[10] = 10;
+    if (cc_features->opt_light_map) {
+        // Match the receiver VBO layout: texcoord, fog, lightmap, then inputs.
+        vsh->regs.sq_vtx_semantic[3] = 3;
+    }
+    for (uint32_t i = 0; i < 8; ++i) {
+        const uint32_t reg_index = 3u + (cc_features->opt_light_map ? 1u : 0u) + i;
+        if (reg_index >= 12u) {
+            break;
+        }
+        vsh->regs.sq_vtx_semantic[reg_index] = 4u + i;
+    }
 
     vsh->regs.vgt_vertex_reuse_block_cntl = 14; // vtx_reuse_depth
     vsh->regs.vgt_hos_reuse_depth = 16; // reuse_depth
@@ -602,12 +626,19 @@ int gx2GenerateShaderGroup(struct ShaderGroup *group, struct CCFeatures *cc_feat
         attribOffset += 4 * sizeof(float);
     }
 
+    if (cc_features->opt_light_map) {
+        group->attributes[group->numAttributes++] =
+            (GX2AttribStream) { 3, 0, attribOffset, GX2_ATTRIB_FORMAT_FLOAT_32_32, GX2_ATTRIB_INDEX_PER_VERTEX, 0, GX2_COMP_SEL(_x, _y, _0, _1), GX2_ENDIAN_SWAP_DEFAULT };
+        attribOffset += (2 + 2) * sizeof(float);
+    }
+
     const uint32_t num_inputs = (cc_features->num_inputs > 8) ? 8u : (uint32_t)cc_features->num_inputs;
 
-    // aInput
+    // Match the upstream receiver contract: lightmap UVs are packed before
+    // combiner inputs in the CPU VBO layout.
     for (uint32_t i = 0; i < num_inputs; i++) {
-        group->attributes[group->numAttributes++] = 
-            (GX2AttribStream) { 3 + i, 0, attribOffset, GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32, GX2_ATTRIB_INDEX_PER_VERTEX, 0, GX2_COMP_SEL(_x, _y, _z, _w), GX2_ENDIAN_SWAP_DEFAULT };
+        group->attributes[group->numAttributes++] =
+            (GX2AttribStream) { 4 + i, 0, attribOffset, GX2_ATTRIB_FORMAT_FLOAT_32_32_32_32, GX2_ATTRIB_INDEX_PER_VERTEX, 0, GX2_COMP_SEL(_x, _y, _z, _w), GX2_ENDIAN_SWAP_DEFAULT };
         attribOffset += 4 * sizeof(float);
     }
 

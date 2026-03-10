@@ -115,6 +115,10 @@ static uint32_t sShaderBindStepLogCount = 0;
 static uint32_t sSamplerLogCount = 0;
 static uint32_t sMenuDrawSubmitLogCount = 0;
 static uint32_t sUploadLogCount = 0;
+static uint32_t sArenaLightmapTextureLogCount = 0;
+static uint32_t sArenaLightmapSamplerLogCount = 0;
+static uint32_t sArenaLightmapDrawStateLogCount = 0;
+static uint32_t sArenaLightmapUniformLogCount = 0;
 static BOOL current_depth_test = FALSE;
 static BOOL current_depth_write = FALSE;
 static GX2CompareFunction current_depth_compare = GX2_COMPARE_FUNC_LEQUAL;
@@ -122,6 +126,13 @@ static GX2CompareFunction current_depth_compare = GX2_COMPARE_FUNC_LEQUAL;
 static bool gfx_gx2_should_log_deep(void)
 {
     return gCurrLevelNum == 16;
+}
+
+static bool gfx_gx2_is_arena_lightmap_shader(const struct ShaderProgram *prg)
+{
+    return prg != nullptr
+        && gCurrLevelNum == 55
+        && prg->shader_id == 0x58fd5ea80c57a2bfULL;
 }
 
 static void gfx_gx2_log_first_vbo_words(const float *buf_vbo, size_t buf_vbo_len, uint8_t stride_floats)
@@ -152,24 +163,47 @@ static void gfx_gx2_log_target_menu_vertex(const struct ShaderProgram *prg, cons
     static bool sLoggedDcb = false;
     static bool sLogged9110 = false;
     static bool sLoggedB907 = false;
+    static bool sLoggedArenaLightmap = false;
 
-    if (prg == nullptr || buf_vbo == nullptr || gCurrLevelNum != 16) {
+    if (prg == nullptr || buf_vbo == nullptr) {
         return;
     }
 
     bool *logged = nullptr;
-    switch (prg->shader_id) {
-        case 0xdcb8e5ccb156fe13ULL: logged = &sLoggedDcb; break;
-        case 0x9110eeef671497b0ULL: logged = &sLogged9110; break;
-        case 0xb9079915e8025b0fULL: logged = &sLoggedB907; break;
-        default: return;
+    if (gCurrLevelNum == 16) {
+        switch (prg->shader_id) {
+            case 0xdcb8e5ccb156fe13ULL: logged = &sLoggedDcb; break;
+            case 0x9110eeef671497b0ULL: logged = &sLogged9110; break;
+            case 0xb9079915e8025b0fULL: logged = &sLoggedB907; break;
+            default: return;
+        }
+    } else if (gCurrLevelNum == 55 && prg->shader_id == 0x58fd5ea80c57a2bfULL) {
+        logged = &sLoggedArenaLightmap;
+    } else {
+        return;
     }
 
-    if (*logged || prg->num_floats < 16 || buf_vbo_len < prg->num_floats) {
+    if (*logged || buf_vbo_len < prg->num_floats) {
         return;
     }
 
     *logged = true;
+    if (prg->shader_id == 0x58fd5ea80c57a2bfULL && prg->num_floats >= 12) {
+        WHBLogPrintf(
+            "gfx: arena-lightmap-vtx stride=%u pos=%f,%f,%f,%f uv=%f,%f pad=%f,%f lm=%f,%f pad=%f,%f lmOff=%u vtxColor=%u,%u,%u",
+            (unsigned)prg->num_floats,
+            buf_vbo[0], buf_vbo[1], buf_vbo[2], buf_vbo[3],
+            buf_vbo[4], buf_vbo[5], buf_vbo[6], buf_vbo[7],
+            buf_vbo[8], buf_vbo[9], buf_vbo[10], buf_vbo[11],
+            (unsigned)prg->lightmap_color_offset,
+            (unsigned)gVertexColor[0], (unsigned)gVertexColor[1], (unsigned)gVertexColor[2]);
+        return;
+    }
+
+    if (prg->num_floats < 16) {
+        return;
+    }
+
     WHBLogPrintf(
         "gfx: target-vtx hash=0x%016llx stride=%u pos=%f,%f,%f,%f uv=%f,%f in1=%f,%f,%f,%f in2=%f,%f,%f,%f",
         (unsigned long long)prg->shader_id,
@@ -404,6 +438,17 @@ static void gfx_gx2_set_uniforms(struct ShaderProgram* prg)
             gVertexColor[2] / 255.0f,
             1.0f,
         };
+        if (gfx_gx2_is_arena_lightmap_shader(prg) && sArenaLightmapUniformLogCount < 8) {
+            WHBLogPrintf(
+                "gfx: arena-lightmap uniform[%u] off=%u color=%f,%f,%f,%f",
+                (unsigned)sArenaLightmapUniformLogCount,
+                (unsigned)prg->lightmap_color_offset,
+                lightmap_color[0],
+                lightmap_color[1],
+                lightmap_color[2],
+                lightmap_color[3]);
+            sArenaLightmapUniformLogCount++;
+        }
         GX2SetPixelUniformReg(prg->lightmap_color_offset, 4, lightmap_color);
     }
 }
@@ -469,7 +514,7 @@ static struct ShaderProgram* gfx_gx2_create_and_load_new_shader(struct ColorComb
 
     if ((gCurrLevelNum == 16 || gCurrLevelNum == 55) && sShaderCreateLogCount < 24) {
         WHBLogPrintf(
-            "gfx: create[%u] lvl=%d hash=0x%016llx pre=%u inputs=%u tex=%u,%u fog=%u alpha=%u lm=%u map=%u,%u,%u,%u cmds=%u,%u,%u,%u,%u,%u,%u,%u",
+            "gfx: create[%u] lvl=%d hash=0x%016llx pre=%u inputs=%u tex=%u,%u fog=%u alpha=%u lm=%u lmOff=%u map=%u,%u,%u,%u cmds=%u,%u,%u,%u,%u,%u,%u,%u",
             (unsigned)sShaderCreateLogCount,
             (int)gCurrLevelNum,
             (unsigned long long)shader_id,
@@ -480,6 +525,7 @@ static struct ShaderProgram* gfx_gx2_create_and_load_new_shader(struct ColorComb
             (unsigned)cc_features.opt_fog,
             (unsigned)cc_features.opt_alpha,
             (unsigned)cc_features.opt_light_map,
+            (unsigned)prg->lightmap_color_offset,
             (unsigned)cc->shader_input_mapping[0],
             (unsigned)cc->shader_input_mapping[1],
             (unsigned)cc->shader_input_mapping[2],
@@ -494,8 +540,6 @@ static struct ShaderProgram* gfx_gx2_create_and_load_new_shader(struct ColorComb
             (unsigned)cc_features.shader_cmds[7]);
         sShaderCreateLogCount++;
     }
-
-    gfx_gx2_load_shader(prg);
 
     const GX2PixelShader *pixel_shader = &prg->gen_group.pixelShader;
     const s32 window_params_offset = GX2GetPixelUniformVarOffsetSafe(pixel_shader, "window_params");
@@ -516,6 +560,7 @@ static struct ShaderProgram* gfx_gx2_create_and_load_new_shader(struct ColorComb
         prg->samplers_location[1] = (uint32_t)sampler1;
     }
     prg->used_noise = cc_features.opt_alpha && cc_features.opt_noise;
+    gfx_gx2_load_shader(prg);
 
     return prg;
 }
@@ -575,6 +620,20 @@ static void gfx_gx2_select_texture(int tile, uint32_t texture_id)
 
     current_tile = tile;
     current_texture_ids[tile] = texture_id;
+    if (gfx_gx2_is_arena_lightmap_shader(current_shader_program) && sArenaLightmapTextureLogCount < 12) {
+        const Texture &texture = gx2_textures[texture_id];
+        WHBLogPrintf(
+            "gfx: arena-lightmap select[%u] tile=%d tex=%u loc=%u uploaded=%u sampler=%u size=%ux%u",
+            (unsigned)sArenaLightmapTextureLogCount,
+            tile,
+            (unsigned)texture_id,
+            (unsigned)current_shader_program->samplers_location[tile],
+            (unsigned)texture.texture_uploaded,
+            (unsigned)texture.sampler_set,
+            (unsigned)texture.texture.surface.width,
+            (unsigned)texture.texture.surface.height);
+        sArenaLightmapTextureLogCount++;
+    }
     if (sTextureBindLogCount < 24 && gfx_gx2_should_log_deep()) {
         WHBLogPrintf("gfx: select-texture[%u] lvl=%d tile=%d tex=%u shader=0x%016llx",
                      (unsigned)sTextureBindLogCount,
@@ -791,6 +850,18 @@ static void gfx_gx2_set_sampler_parameters(int tile, bool linear_filter, uint32_
 
     uint32_t texture_id = current_texture_ids[tile];
     GX2Sampler* sampler = &gx2_textures[texture_id].sampler;
+    if (gfx_gx2_is_arena_lightmap_shader(current_shader_program) && sArenaLightmapSamplerLogCount < 12) {
+        WHBLogPrintf(
+            "gfx: arena-lightmap sampler[%u] tile=%d tex=%u loc=%u linear=%u cms=0x%x cmt=0x%x",
+            (unsigned)sArenaLightmapSamplerLogCount,
+            tile,
+            (unsigned)texture_id,
+            (unsigned)current_shader_program->samplers_location[tile],
+            (unsigned)linear_filter,
+            (unsigned)cms,
+            (unsigned)cmt);
+        sArenaLightmapSamplerLogCount++;
+    }
     if (sSamplerLogCount < 24 && gfx_gx2_should_log_deep()) {
         WHBLogPrintf("gfx: sampler[%u] begin lvl=%d tile=%d tex=%u linear=%u cms=0x%x cmt=0x%x shader=0x%016llx",
                      (unsigned)sSamplerLogCount,
@@ -968,6 +1039,28 @@ static void gfx_gx2_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t b
             x, y, z
         );
         sArenaDrawLogCount++;
+    }
+    if (gfx_gx2_is_arena_lightmap_shader(current_shader_program) && sArenaLightmapDrawStateLogCount < 8) {
+        const uint32_t tex0 = current_texture_ids[0];
+        const uint32_t tex1 = current_texture_ids[1];
+        const Texture *t0 = gfx_gx2_is_valid_texture_id(tex0) ? &gx2_textures[tex0] : nullptr;
+        const Texture *t1 = gfx_gx2_is_valid_texture_id(tex1) ? &gx2_textures[tex1] : nullptr;
+        WHBLogPrintf(
+            "gfx: arena-lightmap draw[%u] tex0=%u up=%u size=%ux%u sampLoc=%u tex1=%u up=%u size=%ux%u sampLoc=%u tris=%u stride=%u",
+            (unsigned)sArenaLightmapDrawStateLogCount,
+            (unsigned)tex0,
+            (unsigned)(t0 != nullptr && t0->texture_uploaded),
+            (unsigned)(t0 != nullptr ? t0->texture.surface.width : 0),
+            (unsigned)(t0 != nullptr ? t0->texture.surface.height : 0),
+            (unsigned)current_shader_program->samplers_location[0],
+            (unsigned)tex1,
+            (unsigned)(t1 != nullptr && t1->texture_uploaded),
+            (unsigned)(t1 != nullptr ? t1->texture.surface.width : 0),
+            (unsigned)(t1 != nullptr ? t1->texture.surface.height : 0),
+            (unsigned)current_shader_program->samplers_location[1],
+            (unsigned)buf_vbo_num_tris,
+            (unsigned)current_shader_program->num_floats);
+        sArenaLightmapDrawStateLogCount++;
     }
     if (gCurrLevelNum == 55 && sArenaPrepLogCount < 3) {
         WHBLogPrintf("gfx: arena step[%u] post-drawlog len=%u tris=%u",

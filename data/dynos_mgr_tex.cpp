@@ -221,6 +221,86 @@ u8 *DynOS_Tex_ConvertToRGBA32(const u8 *aData, u64 aLength, s32 aFormat, s32 aSi
 //
 
 typedef struct GfxRenderingAPI GRAPI;
+
+static bool DynOS_Tex_ShouldProbeArenaTexture(const DataNode<TexData> *aNode) {
+    if (aNode == NULL) {
+        return false;
+    }
+    const String &name = aNode->mName;
+    return name == "arena_spire_dl_lightmap_rgba16"
+        || name == "arena_spire_dl_snow_grassy_6_rgba16"
+        || name == "arena_spire_dl_train_tracks_02_rgba16"
+        || name == "arena_spire_dl_snow_path_02_rgba16"
+        || name == "arena_spire_dl_rock_wall_06_rgba16"
+        || name == "arena_spire_dl_bricks_modern_01_rgba16"
+        || name == "arena_spire_dl_concrete_floor_06_rgba16";
+}
+
+static void DynOS_Tex_LogArenaTextureProbe(const DataNode<TexData> *aNode, s32 aTile, s32 aTexId) {
+    static u32 sArenaProbeLogCount = 0;
+    if (sArenaProbeLogCount >= 16 || aNode == NULL || aNode->mData == NULL) {
+        return;
+    }
+
+    const u8 *rgba = aNode->mData->mRawData.begin();
+    const u32 width = (u32) aNode->mData->mRawWidth;
+    const u32 height = (u32) aNode->mData->mRawHeight;
+    if (rgba == NULL || width == 0 || height == 0) {
+        return;
+    }
+
+    struct SamplePoint {
+        u32 x;
+        u32 y;
+    };
+    const SamplePoint samplePoints[] = {
+        { 0, 0 },
+        { width / 4, height / 4 },
+        { width / 2, height / 2 },
+        { (width * 3) / 4, (height * 3) / 4 },
+    };
+
+    u32 minBrightness = 255;
+    u32 maxBrightness = 0;
+    uint64_t sumBrightness = 0;
+    u32 sampleCount = 0;
+    const u32 stepX = (width >= 16) ? (width / 8) : 1;
+    const u32 stepY = (height >= 16) ? (height / 8) : 1;
+    for (u32 y = 0; y < height; y += stepY) {
+        for (u32 x = 0; x < width; x += stepX) {
+            const u32 idx = (y * width + x) * 4;
+            const u32 brightness = (u32)(((u32)rgba[idx + 0] + (u32)rgba[idx + 1] + (u32)rgba[idx + 2]) / 3);
+            if (brightness < minBrightness) { minBrightness = brightness; }
+            if (brightness > maxBrightness) { maxBrightness = brightness; }
+            sumBrightness += brightness;
+            sampleCount++;
+        }
+    }
+
+    const u32 idx0 = (samplePoints[0].y * width + samplePoints[0].x) * 4;
+    const u32 idx1 = (samplePoints[1].y * width + samplePoints[1].x) * 4;
+    const u32 idx2 = (samplePoints[2].y * width + samplePoints[2].x) * 4;
+    const u32 idx3 = (samplePoints[3].y * width + samplePoints[3].x) * 4;
+    const u32 avgBrightness = (sampleCount > 0) ? (u32)(sumBrightness / sampleCount) : 0;
+
+    WHBLogPrintf(
+        "dynos_tex_probe: name='%s' tile=%d tex=%d %ux%u avg=%u min=%u max=%u p00=%02x%02x%02x p25=%02x%02x%02x p50=%02x%02x%02x p75=%02x%02x%02x",
+        aNode->mName.begin(),
+        aTile,
+        aTexId,
+        width,
+        height,
+        avgBrightness,
+        minBrightness,
+        maxBrightness,
+        rgba[idx0 + 0], rgba[idx0 + 1], rgba[idx0 + 2],
+        rgba[idx1 + 0], rgba[idx1 + 1], rgba[idx1 + 2],
+        rgba[idx2 + 0], rgba[idx2 + 1], rgba[idx2 + 2],
+        rgba[idx3 + 0], rgba[idx3 + 1], rgba[idx3 + 2]
+    );
+    sArenaProbeLogCount++;
+}
+
 static void DynOS_Tex_Upload(DataNode<TexData> *aNode, GRAPI *aGfxRApi, s32 aTile, s32 aTexId) {
     static u32 sDynosTexUploadLogCount = 0;
     static bool sArenaFortsUploadPhaseLogged = false;
@@ -258,6 +338,9 @@ static void DynOS_Tex_Upload(DataNode<TexData> *aNode, GRAPI *aGfxRApi, s32 aTil
                          rgba[3]);
             sDynosTexUploadLogCount++;
         }
+    }
+    if (DynOS_Tex_ShouldProbeArenaTexture(aNode)) {
+        DynOS_Tex_LogArenaTextureProbe(aNode, aTile, aTexId);
     }
     if (!sArenaFortsUploadPhaseLogged && aNode != NULL && aNode->mName == "arena_forts_dl_dirt2_rgba16") {
         WHBLogPrintf("dynos_tex_upload: before_select name='%s' tile=%d tex=%d",

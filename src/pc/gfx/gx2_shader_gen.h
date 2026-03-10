@@ -13,7 +13,7 @@ struct ShaderGroup {
     GX2FetchShader fetchShader;
 
     uint32_t numAttributes;
-    GX2AttribStream attributes[11];
+    GX2AttribStream attributes[12];
 };
 
 int gx2GenerateShaderGroup(struct ShaderGroup *group, struct CCFeatures *cc_features);
