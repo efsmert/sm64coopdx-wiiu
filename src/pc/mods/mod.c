@@ -35,6 +35,24 @@ size_t mod_get_lua_size(struct Mod* mod) {
     return size;
 }
 
+static void mod_ensure_runtime_cached_path(struct Mod* mod, struct ModFile* file) {
+    if (mod == NULL || file == NULL || file->cachedPath != NULL) {
+        return;
+    }
+
+    char fullPath[SYS_MAX_PATH] = { 0 };
+    if (!mod_file_full_path(fullPath, mod, file)) {
+        LOG_ERROR("Failed to build runtime mod path: '%s' + '%s'", mod->basePath, file->relativePath);
+        return;
+    }
+
+    normalize_path(fullPath);
+    file->cachedPath = strdup(fullPath);
+    if (file->cachedPath == NULL) {
+        LOG_ERROR("Failed to allocate runtime mod path for '%s'", file->relativePath);
+    }
+}
+
 static void mod_activate_bin(struct Mod* mod, struct ModFile* file) {
     if (file->cachedPath == NULL || file->relativePath[0] == '\0') {
         LOG_ERROR("Skipping invalid DynOS bin file (null path)");
@@ -227,6 +245,7 @@ void mod_activate(struct Mod* mod) {
     // activate dynos models
     for (int i = 0; i < mod->fileCount; i++) {
         struct ModFile* file = &mod->files[i];
+        mod_ensure_runtime_cached_path(mod, file);
 #ifdef TARGET_WII_U
         // Wii U joins can activate mods from a non-newlib-managed thread; avoid stat/md5 cache I/O here.
         file->modifiedTimestamp = 0;

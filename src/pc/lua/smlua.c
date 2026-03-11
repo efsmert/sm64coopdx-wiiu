@@ -678,6 +678,8 @@ void smlua_init(void) {
     smlua_shutdown();
 
 #ifdef TARGET_WII_U
+    sSmluaWiiULogBudget = 512;
+    sSmluaWiiULogLimitNotified = false;
     smlua_wiiu_step("init_begin");
     LOG_INFO("wiiu-lua: smlua_init begin");
     SMLUA_WIIU_LOG("smlua: init begin\n");
@@ -840,14 +842,6 @@ void smlua_init(void) {
 
                 if (rc == LUA_OK) {
                     smlua_cache_module_result(L, mod, file, prevTop);
-#ifdef TARGET_WII_U
-                } else {
-                    // Don't continue loading this mod after a script error; it can cascade.
-                    SMLUA_WIIU_LOG("smlua: abort remaining files for mod '%s' after rc=%d in '%s'\n",
-                                   mod->relativePath, rc, file->relativePath);
-                    lua_settop(L, 0);
-                    break;
-#endif
                 }
             }
 

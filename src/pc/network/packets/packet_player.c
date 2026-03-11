@@ -81,6 +81,79 @@ struct PacketPlayerData {
 };
 #pragma pack()
 
+#ifdef TARGET_WII_U
+static inline u16 packet_player_bswap_u16(u16 value) {
+    return __builtin_bswap16(value);
+}
+
+static inline u32 packet_player_bswap_u32(u32 value) {
+    return __builtin_bswap32(value);
+}
+
+static inline f32 packet_player_bswap_f32(f32 value) {
+    u32 raw = 0;
+    memcpy(&raw, &value, sizeof(raw));
+    raw = packet_player_bswap_u32(raw);
+    memcpy(&value, &raw, sizeof(value));
+    return value;
+}
+
+static void packet_player_data_swap_endian(struct PacketPlayerData* data) {
+    if (data == NULL) { return; }
+
+    for (u32 i = 0; i < OBJECT_NUM_REGULAR_FIELDS; i++) {
+        data->rawData[i] = packet_player_bswap_u32(data->rawData[i]);
+    }
+
+    data->cRawStickX = (s16)packet_player_bswap_u16((u16)data->cRawStickX);
+    data->cRawStickY = (s16)packet_player_bswap_u16((u16)data->cRawStickY);
+    data->cStickX = packet_player_bswap_f32(data->cStickX);
+    data->cStickY = packet_player_bswap_f32(data->cStickY);
+    data->cStickMag = packet_player_bswap_f32(data->cStickMag);
+    data->cButtonDown = packet_player_bswap_u16(data->cButtonDown);
+    data->cButtonPressed = packet_player_bswap_u16(data->cButtonPressed);
+    data->cButtonReleased = packet_player_bswap_u16(data->cButtonReleased);
+    data->cExtStickX = (s16)packet_player_bswap_u16((u16)data->cExtStickX);
+    data->cExtStickY = (s16)packet_player_bswap_u16((u16)data->cExtStickY);
+    data->nodeFlags = (s16)packet_player_bswap_u16((u16)data->nodeFlags);
+    data->input = packet_player_bswap_u16(data->input);
+    data->flags = packet_player_bswap_u32(data->flags);
+    data->particleFlags = packet_player_bswap_u32(data->particleFlags);
+    data->action = packet_player_bswap_u32(data->action);
+    data->prevAction = packet_player_bswap_u32(data->prevAction);
+    data->actionState = packet_player_bswap_u16(data->actionState);
+    data->actionTimer = packet_player_bswap_u16(data->actionTimer);
+    data->actionArg = packet_player_bswap_u32(data->actionArg);
+    data->intendedMag = packet_player_bswap_f32(data->intendedMag);
+    data->intendedYaw = (s16)packet_player_bswap_u16((u16)data->intendedYaw);
+    data->invincTimer = (s16)packet_player_bswap_u16((u16)data->invincTimer);
+
+    for (u32 i = 0; i < 3; i++) {
+        data->faceAngle[i] = (s16)packet_player_bswap_u16((u16)data->faceAngle[i]);
+        data->angleVel[i] = (s16)packet_player_bswap_u16((u16)data->angleVel[i]);
+        data->pos[i] = packet_player_bswap_f32(data->pos[i]);
+        data->vel[i] = packet_player_bswap_f32(data->vel[i]);
+        data->headRotation[i] = (s16)packet_player_bswap_u16((u16)data->headRotation[i]);
+    }
+
+    data->slideYaw = (s16)packet_player_bswap_u16((u16)data->slideYaw);
+    data->twirlYaw = (s16)packet_player_bswap_u16((u16)data->twirlYaw);
+    data->forwardVel = packet_player_bswap_f32(data->forwardVel);
+    data->slideVelX = packet_player_bswap_f32(data->slideVelX);
+    data->slideVelZ = packet_player_bswap_f32(data->slideVelZ);
+    data->health = (s16)packet_player_bswap_u16((u16)data->health);
+    data->peakHeight = packet_player_bswap_f32(data->peakHeight);
+    data->currentRoom = (s16)packet_player_bswap_u16((u16)data->currentRoom);
+    data->heldSyncID = packet_player_bswap_u32(data->heldSyncID);
+    data->heldBySyncID = packet_player_bswap_u32(data->heldBySyncID);
+    data->riddenSyncID = packet_player_bswap_u32(data->riddenSyncID);
+    data->interactSyncID = packet_player_bswap_u32(data->interactSyncID);
+    data->usedSyncID = packet_player_bswap_u32(data->usedSyncID);
+    data->platformSyncID = packet_player_bswap_u32(data->platformSyncID);
+    data->dialogId = (s32)packet_player_bswap_u32((u32)data->dialogId);
+}
+#endif
+
 static void read_packet_data(struct PacketPlayerData* data, struct MarioState* m) {
     u32 heldSyncID     = (m->heldObj != NULL)            ? m->heldObj->oSyncID            : 0;
     u32 heldBySyncID   = (m->heldByObj != NULL)          ? m->heldByObj->oSyncID          : 0;
@@ -230,7 +303,13 @@ void network_send_player(u8 localIndex) {
     struct Packet p = { 0 };
     packet_init(&p, PACKET_PLAYER, false, PLMT_AREA);
     packet_write(&p, &gNetworkPlayers[localIndex].globalIndex, sizeof(u8));
+#ifdef TARGET_WII_U
+    struct PacketPlayerData wireData = data;
+    packet_player_data_swap_endian(&wireData);
+    packet_write(&p, &wireData, sizeof(struct PacketPlayerData));
+#else
     packet_write(&p, &data, sizeof(struct PacketPlayerData));
+#endif
     network_send(&p);
 }
 
@@ -275,6 +354,9 @@ void network_receive_player(struct Packet* p) {
     // load mario information from packet
     struct PacketPlayerData data = { 0 };
     packet_read(p, &data, sizeof(struct PacketPlayerData));
+#ifdef TARGET_WII_U
+    packet_player_data_swap_endian(&data);
+#endif
 
     // check to see if we should just drop this packet
     if (oldData.action == ACT_JUMBO_STAR_CUTSCENE && data.action == ACT_JUMBO_STAR_CUTSCENE) {

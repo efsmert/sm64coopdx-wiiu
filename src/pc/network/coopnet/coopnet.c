@@ -64,7 +64,7 @@ static uint32_t sClientModListAttempts = 0;
 
 static CoopNetRc coopnet_initialize(void);
 
-#define COOPNET_RX_QUEUE_CAPACITY 256
+#define COOPNET_RX_QUEUE_CAPACITY 4096
 struct CoopnetRxQueueItem {
     uint64_t userId;
     u8 localIndex;
@@ -72,7 +72,7 @@ struct CoopnetRxQueueItem {
     u8 data[PACKET_LENGTH + 1];
 };
 
-static struct CoopnetRxQueueItem sCoopnetRxQueue[COOPNET_RX_QUEUE_CAPACITY];
+static struct CoopnetRxQueueItem* sCoopnetRxQueue = NULL;
 static volatile u32 sCoopnetRxHead = 0;
 static volatile u32 sCoopnetRxTail = 0;
 static volatile s32 sCoopnetRxLock = 0;
@@ -85,7 +85,24 @@ static void coopnet_rx_unlock(void) {
     __sync_lock_release(&sCoopnetRxLock);
 }
 
+static bool coopnet_rx_queue_ensure_allocated(void) {
+    if (sCoopnetRxQueue != NULL) {
+        return true;
+    }
+
+    sCoopnetRxQueue = calloc(COOPNET_RX_QUEUE_CAPACITY, sizeof(struct CoopnetRxQueueItem));
+    if (sCoopnetRxQueue == NULL) {
+        LOG_ERROR("Failed to allocate CoopNet RX queue");
+        return false;
+    }
+
+    return true;
+}
+
 static void coopnet_rx_queue_clear(void) {
+    if (!coopnet_rx_queue_ensure_allocated()) {
+        return;
+    }
     coopnet_rx_lock();
     sCoopnetRxHead = 0;
     sCoopnetRxTail = 0;
@@ -94,6 +111,9 @@ static void coopnet_rx_queue_clear(void) {
 
 static bool coopnet_rx_queue_push(uint64_t userId, u8 localIndex, const uint8_t* data, u16 dataLength) {
     if (data == NULL || dataLength == 0 || dataLength > (PACKET_LENGTH + 1)) {
+        return false;
+    }
+    if (!coopnet_rx_queue_ensure_allocated()) {
         return false;
     }
 
@@ -117,6 +137,9 @@ static bool coopnet_rx_queue_push(uint64_t userId, u8 localIndex, const uint8_t*
 
 static bool coopnet_rx_queue_pop(struct CoopnetRxQueueItem* outItem) {
     if (outItem == NULL) {
+        return false;
+    }
+    if (sCoopnetRxQueue == NULL) {
         return false;
     }
 
@@ -704,9 +727,19 @@ static void ns_coopnet_shutdown(bool reconnecting) {
 
     sLocalLobbyId = 0;
     sLocalLobbyOwnerId = 0;
+
+    coopnet_rx_lock();
+    free(sCoopnetRxQueue);
+    sCoopnetRxQueue = NULL;
+    sCoopnetRxHead = 0;
+    sCoopnetRxTail = 0;
+    coopnet_rx_unlock();
 }
 
 static CoopNetRc coopnet_initialize(void) {
+    if (!coopnet_rx_queue_ensure_allocated()) {
+        return COOPNET_FAILED;
+    }
     gCoopNetCallbacks.OnConnected = coopnet_on_connected;
     gCoopNetCallbacks.OnDisconnected = coopnet_on_disconnected;
     gCoopNetCallbacks.OnReceive = coopnet_on_receive;
