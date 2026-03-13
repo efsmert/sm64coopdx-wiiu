@@ -1,6 +1,12 @@
 #include <stdio.h>
 #include "../network.h"
 #include "pc/debuglog.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define PLAYER_SETTINGS_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#else
+#define PLAYER_SETTINGS_WIIU_LOG(...)
+#endif
 
 void network_send_player_settings(void) {
     char playerName[MAX_CONFIG_STRING] = { 0 };
@@ -20,6 +26,16 @@ void network_send_player_settings(void) {
             LOG_INFO("truncating player name");
         }
     }
+
+#ifdef TARGET_WII_U
+    PLAYER_SETTINGS_WIIU_LOG(
+        "player_settings: tx global=%u model=%u name='%s' localGlobal=%d serverLocal=%d\n",
+        (unsigned)gNetworkPlayers[0].globalIndex,
+        (unsigned)configPlayerModel,
+        playerName,
+        (gNetworkPlayerLocal != NULL) ? (int)gNetworkPlayerLocal->globalIndex : -1,
+        (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->localIndex : -1);
+#endif
 
     network_send(&p);
 }
@@ -62,4 +78,14 @@ void network_receive_player_settings(struct Packet* p) {
     np->palette      = playerPalette;
 
     network_player_update_model(np->localIndex);
+
+#ifdef TARGET_WII_U
+    PLAYER_SETTINGS_WIIU_LOG(
+        "player_settings: rx fromLocal=%u global=%u -> local=%u model=%u name='%s'\n",
+        (unsigned)p->localIndex,
+        (unsigned)globalId,
+        (unsigned)np->localIndex,
+        (unsigned)playerModel,
+        np->name);
+#endif
 }

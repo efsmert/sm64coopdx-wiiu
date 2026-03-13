@@ -30,7 +30,8 @@
 #include "pc/network/coopnet/coopnet.h"
 #include "pc/network/coopnet/coopnet_id.h"
 #ifdef TARGET_WII_U
-#define JOIN_WIIU_LOG(...)
+#include <coreinit/debug.h>
+#define JOIN_WIIU_LOG(...) OSReport(__VA_ARGS__)
 #else
 #define JOIN_WIIU_LOG(...)
 #endif
@@ -205,6 +206,13 @@ void network_receive_join(struct Packet* p) {
 
     network_player_connected(NPT_SERVER, 0, 0, &DEFAULT_MARIO_PALETTE, "Player", "0");
     network_player_connected(NPT_LOCAL, myGlobalIndex, configPlayerModel, &configPlayerPalette, configPlayerName, get_local_discord_id());
+    JOIN_WIIU_LOG(
+        "packet_join: rx myGlobal=%u localGlobal=%d serverLocal=%d model=%u name='%s'\n",
+        (unsigned)myGlobalIndex,
+        (gNetworkPlayerLocal != NULL) ? (int)gNetworkPlayerLocal->globalIndex : -1,
+        (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->localIndex : -1,
+        (unsigned)configPlayerModel,
+        configPlayerName);
     djui_chat_box_create();
 
     save_file_load_all(TRUE);
@@ -218,6 +226,10 @@ void network_receive_join(struct Packet* p) {
     mods_activate(&gRemoteMods);
     djui_panel_modlist_create(NULL);
     smlua_init();
+
+    // Re-announce local cosmetics after join completes so the host can repair
+    // any stale/default player metadata it created during the provisional join.
+    network_send_player_settings();
     dynos_behavior_hook_all_custom_behaviors();
 
     network_send_network_players_request();

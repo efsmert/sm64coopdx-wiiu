@@ -11,6 +11,18 @@
 #include <limits.h>
 #include <stddef.h>
 
+/*
+** WUT's C++ limits header exposes LONG_LONG_MAX/LONG_LONG_MIN but not the
+** LLONG_* aliases Lua checks for when enabling 64-bit integers.
+*/
+#if defined(TARGET_WII_U) && !defined(LLONG_MAX) && defined(LONG_LONG_MAX)
+#define LLONG_MAX LONG_LONG_MAX
+#endif
+
+#if defined(TARGET_WII_U) && !defined(LLONG_MIN) && defined(LONG_LONG_MIN)
+#define LLONG_MIN LONG_LONG_MIN
+#endif
+
 
 /*
 ** ===================================================================
@@ -787,4 +799,3 @@
 
 
 #endif
-

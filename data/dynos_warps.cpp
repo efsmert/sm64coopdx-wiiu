@@ -11,6 +11,7 @@ extern "C" {
 #include "game/level_update.h"
 #include "game/sound_init.h"
 #include "game/object_list_processor.h"
+#include "pc/network/network.h"
 #include "pc/network/packets/packet.h"
 #include "pc/lua/smlua_hooks.h"
 extern s32 gWdwWaterLevelSet;
@@ -293,6 +294,11 @@ static void *DynOS_Warp_UpdateWarp(void *aCmd, bool aIsLevelInitDone) {
             // lua hooks
             smlua_call_event_hooks(HOOK_ON_WARP, sBackupWarpDest.type, sDynosWarpLevelNum, sDynosWarpAreaNum, sDynosWarpNodeNum, sBackupWarpDest.arg);
 
+            // DynOS warps can finish after the generic loading timer already fired,
+            // so always re-announce the final loaded level/area here.
+            gNetworkAreaLoaded = true;
+            network_on_loaded_area();
+
             dynos_wiiu_warp_log("dynos_warp_update: phase3 complete level=%d area=%d act=%d node=%d mario=%p\n",
                                 gCurrLevelNum, gCurrAreaIndex, gCurrActNum, sDynosWarpNodeNum, gMarioObjects[0]);
 
@@ -443,6 +449,9 @@ static void *DynOS_Warp_UpdateExit(void *aCmd, bool aIsLevelInitDone) {
 
             // lua hooks
             smlua_call_event_hooks(HOOK_ON_WARP, sBackupWarpDest.type, sDynosWarpLevelNum, sDynosWarpAreaNum, sDynosWarpNodeNum, sBackupWarpDest.arg);
+
+            gNetworkAreaLoaded = true;
+            network_on_loaded_area();
         }
 
         // Phase 4 - Unlock Mario as soon as the second transition is ended

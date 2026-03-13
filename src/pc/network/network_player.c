@@ -17,6 +17,12 @@
 #endif
 #include "game/mario.h"
 #include "pc/djui/djui_unicode.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define NETWORK_PLAYER_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#else
+#define NETWORK_PLAYER_WIIU_LOG(...)
+#endif
 
 struct NetworkPlayer gNetworkPlayers[MAX_PLAYERS] = { 0 };
 struct NetworkPlayer *gNetworkPlayerLocal = NULL;
@@ -355,6 +361,18 @@ u8 network_player_connected(enum NetworkPlayerType type, u8 globalIndex, u8 mode
         construct_player_popup(np, DLANG(NOTIF, CONNECTED), NULL);
     }
     LOG_INFO("player connected, local %d, global %d", localIndex, np->globalIndex);
+#ifdef TARGET_WII_U
+    NETWORK_PLAYER_WIIU_LOG(
+        "network_player_connected: netType=%d type=%d local=%u global=%u model=%u name='%s' serverLocal=%d localGlobal=%d\n",
+        (int)gNetworkType,
+        (int)type,
+        (unsigned)localIndex,
+        (unsigned)np->globalIndex,
+        (unsigned)np->modelIndex,
+        np->name,
+        (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->localIndex : -1,
+        (gNetworkPlayerLocal != NULL) ? (int)gNetworkPlayerLocal->globalIndex : -1);
+#endif
 
     smlua_call_event_hooks(HOOK_ON_PLAYER_CONNECTED, &gMarioStates[localIndex]);
 

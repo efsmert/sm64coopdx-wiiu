@@ -11,6 +11,22 @@
 #include "pc/lua/smlua_hooks.h"
 #include "pc/debuglog.h"
 
+#ifdef TARGET_WII_U
+static inline u32 packet_collect_star_bswap_u32(u32 value) {
+    return __builtin_bswap32(value);
+}
+
+static void packet_collect_star_swap_vec3f(f32* values) {
+    if (values == NULL) { return; }
+    for (u32 i = 0; i < 3; i++) {
+        u32 raw = 0;
+        memcpy(&raw, &values[i], sizeof(raw));
+        raw = packet_collect_star_bswap_u32(raw);
+        memcpy(&values[i], &raw, sizeof(values[i]));
+    }
+}
+#endif
+
 extern s16 gCurrSaveFileNum;
 extern s16 gCurrCourseNum;
 extern u8 gSaveFileUsingBackupSlot;
@@ -49,6 +65,13 @@ static struct Object* find_nearest_star(const BehaviorScript* behavior, f32* pos
 
 void network_send_collect_star(struct Object* o, s16 coinScore, s16 starIndex) {
     u32 behaviorId = get_id_from_behavior(o->behavior);
+    Vec3f pos = { 0 };
+    pos[0] = o->oPosX;
+    pos[1] = o->oPosY;
+    pos[2] = o->oPosZ;
+#ifdef TARGET_WII_U
+    packet_collect_star_swap_vec3f(pos);
+#endif
 
     struct Packet p = { 0 };
     packet_init(&p, PACKET_COLLECT_STAR, true, PLMT_NONE);
@@ -57,7 +80,7 @@ void network_send_collect_star(struct Object* o, s16 coinScore, s16 starIndex) {
     packet_write(&p, &gCurrActStarNum,  sizeof(s16));
     packet_write(&p, &gCurrLevelNum,    sizeof(s16));
     packet_write(&p, &gCurrAreaIndex,   sizeof(s16));
-    packet_write(&p, &o->oPosX, sizeof(f32) * 3);
+    packet_write(&p, &pos, sizeof(f32) * 3);
     packet_write(&p, &behaviorId, sizeof(u32));
     packet_write(&p, &coinScore,  sizeof(s16));
     packet_write(&p, &starIndex,  sizeof(s16));
@@ -83,6 +106,9 @@ void network_receive_collect_star(struct Packet* p) {
     packet_read(p, &gCurrLevelNum,    sizeof(s16));
     packet_read(p, &gCurrAreaIndex,   sizeof(s16));
     packet_read(p, &pos, sizeof(f32) * 3);
+#ifdef TARGET_WII_U
+    packet_collect_star_swap_vec3f(pos);
+#endif
     packet_read(p, &behaviorId, sizeof(u32));
     packet_read(p, &coinScore,  sizeof(s16));
     packet_read(p, &starIndex,  sizeof(s16));

@@ -28,6 +28,25 @@ static void modlist_wiiu_logf(UNUSED const char* fmt, ...) { }
 
 static u8 sModListReplyLocalIndex = 0;
 
+static bool modlist_is_arena_mod(const struct Mod* mod) {
+    return mod != NULL
+        && mod->relativePath[0] != '\0'
+        && strcmp(mod->relativePath, "arena") == 0;
+}
+
+static bool modlist_has_file(const struct Mod* mod, const char* relativePath) {
+    if (mod == NULL || relativePath == NULL) {
+        return false;
+    }
+    for (u16 i = 0; i < mod->fileCount; i++) {
+        const struct ModFile* file = &mod->files[i];
+        if (strcmp(file->relativePath, relativePath) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool modlist_sender_valid(u8 localIndex) {
     if (localIndex == UNKNOWN_LOCAL_INDEX) {
         return true;
@@ -64,7 +83,7 @@ void network_send_mod_list_request(void) {
     packet_init(&p, PACKET_MOD_LIST_REQUEST, true, PLMT_NONE);
     char version[MAX_VERSION_LENGTH] = { 0 };
     snprintf(version, MAX_VERSION_LENGTH, "%s", get_version());
-    packet_write(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
+    packet_write_bytes(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
 
     u8 serverLocal = network_get_server_local_index();
     network_send_to(PACKET_DESTINATION_SERVER, &p);
@@ -110,7 +129,7 @@ void network_send_mod_list(void) {
     char version[MAX_VERSION_LENGTH] = { 0 };
     snprintf(version, MAX_VERSION_LENGTH, "%s", get_version());
     LOG_INFO("sending version: %s", version);
-    packet_write(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
+    packet_write_bytes(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
     packet_write(&p, &gActiveMods.entryCount, sizeof(u16));
     network_send_to(sModListReplyLocalIndex, &p);
 
@@ -134,15 +153,15 @@ void network_send_mod_list(void) {
         packet_init(&p, PACKET_MOD_LIST_ENTRY, true, PLMT_NONE);
         packet_write(&p, &i, sizeof(u16));
         packet_write(&p, &nameLength, sizeof(u16));
-        packet_write(&p, mod->name, sizeof(u8) * nameLength);
+        packet_write_bytes(&p, mod->name, sizeof(u8) * nameLength);
         packet_write(&p, &incompatibleLength, sizeof(u16));
         if (mod->incompatible) {
-            packet_write(&p, mod->incompatible, sizeof(u8) * incompatibleLength);
+            packet_write_bytes(&p, mod->incompatible, sizeof(u8) * incompatibleLength);
         } else {
             packet_write(&p, "", 0);
         }
         packet_write(&p, &relativePathLength, sizeof(u16));
-        packet_write(&p, mod->relativePath, sizeof(u8) * relativePathLength);
+        packet_write_bytes(&p, mod->relativePath, sizeof(u8) * relativePathLength);
         packet_write(&p, &modSize, sizeof(u64));
         packet_write(&p, &mod->isDirectory, sizeof(u8));
         packet_write(&p, &mod->pausable, sizeof(u8));
@@ -160,9 +179,9 @@ void network_send_mod_list(void) {
             packet_write(&p, &i, sizeof(u16));
             packet_write(&p, &j, sizeof(u16));
             packet_write(&p, &relativePathLength, sizeof(u16));
-            packet_write(&p, file->relativePath, sizeof(u8) * relativePathLength);
+            packet_write_bytes(&p, file->relativePath, sizeof(u8) * relativePathLength);
             packet_write(&p, &fileSize, sizeof(u64));
-            packet_write(&p, &file->dataHash[0], sizeof(u8) * 16);
+            packet_write_bytes(&p, &file->dataHash[0], sizeof(u8) * 16);
             network_send_to(sModListReplyLocalIndex, &p);
             LOG_INFO("      '%s': %llu", file->relativePath, (u64)file->size);
         }
@@ -202,7 +221,7 @@ void network_receive_mod_list(struct Packet* p) {
 
     // verify version
     char remoteVersion[MAX_VERSION_LENGTH] = { 0 };
-    packet_read(p, &remoteVersion, sizeof(u8) * MAX_VERSION_LENGTH);
+    packet_read_bytes(p, &remoteVersion, sizeof(u8) * MAX_VERSION_LENGTH);
     LOG_INFO("server has version: %s", version);
     if (memcmp(version, remoteVersion, MAX_VERSION_LENGTH) != 0) {
         network_shutdown(true, false, false, false);
@@ -259,7 +278,7 @@ void network_receive_mod_list_entry(struct Packet* p) {
 
     // get name
     char name[MOD_NAME_MAX_LENGTH + 1] = { 0 };
-    packet_read(p, name, nameLength * sizeof(u8));
+    packet_read_bytes(p, name, nameLength * sizeof(u8));
     mod->name = strdup(name);
 
     // get incompatible length
@@ -273,7 +292,7 @@ void network_receive_mod_list_entry(struct Packet* p) {
     // get incompatible
     if (incompatibleLength > 0) {
         char incompatible[MOD_INCOMPATIBLE_MAX_LENGTH + 1] = { 0 };
-        packet_read(p, incompatible, incompatibleLength * sizeof(u8));
+        packet_read_bytes(p, incompatible, incompatibleLength * sizeof(u8));
         mod->incompatible = strdup(incompatible);
     } else {
         packet_read(p, 0, 0);
@@ -286,7 +305,7 @@ void network_receive_mod_list_entry(struct Packet* p) {
         LOG_ERROR("Received mod relative path with invalid length: %u", relativePathLength);
         return;
     }
-    packet_read(p, mod->relativePath, relativePathLength * sizeof(u8));
+    packet_read_bytes(p, mod->relativePath, relativePathLength * sizeof(u8));
     if (p->error) {
         LOG_ERROR("Failed to read mod relative path");
         return;
@@ -337,6 +356,13 @@ void network_receive_mod_list_entry(struct Packet* p) {
         LOG_ERROR("Failed to allocate mod files!");
         return;
     }
+
+    if (modlist_is_arena_mod(mod)) {
+        modlist_wiiu_logf("coopnet-modlist: arena entry files=%u size=%llu base=%s\n",
+                          mod->fileCount,
+                          (unsigned long long)mod->size,
+                          mod->basePath);
+    }
 }
 
 void network_receive_mod_list_file(struct Packet* p) {
@@ -379,7 +405,7 @@ void network_receive_mod_list_file(struct Packet* p) {
         LOG_ERROR("Received mod file path with invalid length: %u", relativePathLength);
         return;
     }
-    packet_read(p, file->relativePath, relativePathLength * sizeof(u8));
+    packet_read_bytes(p, file->relativePath, relativePathLength * sizeof(u8));
     if (p->error) {
         LOG_ERROR("Failed to read mod file path");
         return;
@@ -392,9 +418,20 @@ void network_receive_mod_list_file(struct Packet* p) {
         return;
     }
     file->size = (size_t)remoteFileSize;
-    packet_read(p, &file->dataHash, sizeof(u8) * 16);
+    packet_read_bytes(p, &file->dataHash, sizeof(u8) * 16);
     file->fp = NULL;
     LOG_INFO("      '%s': %llu", file->relativePath, (u64)file->size);
+
+    if (modlist_is_arena_mod(mod)) {
+        modlist_wiiu_logf("coopnet-modlist: arena file[%u]='%s' size=%llu hash=%02x%02x%02x%02x\n",
+                          fileIndex,
+                          file->relativePath,
+                          (unsigned long long)file->size,
+                          file->dataHash[0],
+                          file->dataHash[1],
+                          file->dataHash[2],
+                          file->dataHash[3]);
+    }
 
     struct ModCacheEntry* cache = mod_cache_get_from_hash(file->dataHash);
     if (cache != NULL) {
@@ -419,6 +456,14 @@ void network_receive_mod_list_done(struct Packet* p) {
     for (u16 i = 0; i < gRemoteMods.entryCount; i++) {
         struct Mod* mod = gRemoteMods.entries[i];
         totalSize += mod->size;
+        if (modlist_is_arena_mod(mod)) {
+            modlist_wiiu_logf("coopnet-modlist: arena done hasMain=%d hasFlag=%d hasPlayer=%d hasSpawn=%d fileCount=%u\n",
+                              modlist_has_file(mod, "main.lua") ? 1 : 0,
+                              modlist_has_file(mod, "arena-flag.lua") ? 1 : 0,
+                              modlist_has_file(mod, "arena-player.lua") ? 1 : 0,
+                              modlist_has_file(mod, "arena-spawn.lua") ? 1 : 0,
+                              mod->fileCount);
+        }
     }
     gRemoteMods.size = totalSize;
 

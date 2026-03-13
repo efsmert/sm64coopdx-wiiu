@@ -30,6 +30,33 @@ struct SpawnObjectData {
 };
 #pragma pack()
 
+#ifdef TARGET_WII_U
+static inline u16 packet_spawn_bswap_u16(u16 value) {
+    return __builtin_bswap16(value);
+}
+
+static inline u32 packet_spawn_bswap_u32(u32 value) {
+    return __builtin_bswap32(value);
+}
+
+static void packet_spawn_swap_u32_words(u32* words, u32 count) {
+    if (words == NULL) { return; }
+    for (u32 i = 0; i < count; i++) {
+        words[i] = packet_spawn_bswap_u32(words[i]);
+    }
+}
+
+static void packet_spawn_swap_data(struct SpawnObjectData* data) {
+    if (data == NULL) { return; }
+    data->parentId = packet_spawn_bswap_u32(data->parentId);
+    data->model = packet_spawn_bswap_u32(data->model);
+    data->behaviorId = packet_spawn_bswap_u32(data->behaviorId);
+    data->activeFlags = (s16)packet_spawn_bswap_u16((u16)data->activeFlags);
+    packet_spawn_swap_u32_words((u32*)data->rawData, OBJECT_NUM_FIELDS);
+    data->extendedModelId = packet_spawn_bswap_u16(data->extendedModelId);
+}
+#endif
+
 static u32 generate_parent_id(struct Object* objects[], u8 onIndex, bool sanitize) {
     struct Object* o = objects[onIndex];
     if (!o) { return (u32)-1; }
@@ -97,18 +124,26 @@ void network_send_spawn_objects_to(u8 sendToLocalIndex, struct Object* objects[]
         u16 extendedModelId = (so && so->o == o)
                             ? so->extendedModelId
                             : 0xFFFF;
-        packet_write(&p, &o->ctx, sizeof(u8));
-        packet_write(&p, &parentId, sizeof(u32));
-        packet_write(&p, &model, sizeof(u32));
-        packet_write(&p, &behaviorId, sizeof(u32));
-        packet_write(&p, &o->activeFlags, sizeof(s16));
-        packet_write(&p, o->rawData.asU32, sizeof(u32) * OBJECT_NUM_FIELDS);
-        packet_write(&p, &o->header.gfx.scale[0], sizeof(f32));
-        packet_write(&p, &o->header.gfx.scale[1], sizeof(f32));
-        packet_write(&p, &o->header.gfx.scale[2], sizeof(f32));
-        packet_write(&p, &o->setHome, sizeof(u8));
-        packet_write(&p, &o->globalPlayerIndex, sizeof(u8));
-        packet_write(&p, &extendedModelId, sizeof(u16));
+        struct SpawnObjectData data = { 0 };
+        Vec3f scale = { 0 };
+        data.ctx = o->ctx;
+        data.parentId = parentId;
+        data.model = model;
+        data.behaviorId = behaviorId;
+        data.activeFlags = o->activeFlags;
+        memcpy(data.rawData, o->rawData.asU32, sizeof(data.rawData));
+        data.setHome = o->setHome;
+        data.globalPlayerIndex = o->globalPlayerIndex;
+        data.extendedModelId = extendedModelId;
+        scale[0] = o->header.gfx.scale[0];
+        scale[1] = o->header.gfx.scale[1];
+        scale[2] = o->header.gfx.scale[2];
+#ifdef TARGET_WII_U
+        packet_spawn_swap_data(&data);
+        packet_spawn_swap_u32_words((u32*)scale, 3);
+#endif
+        packet_write_bytes(&p, &data, sizeof(data));
+        packet_write_bytes(&p, &scale, sizeof(scale));
     }
 
     if (sendToLocalIndex == PACKET_DESTINATION_BROADCAST) {
@@ -138,19 +173,12 @@ void network_receive_spawn_objects(struct Packet* p) {
     for (u8 i = 0; i < objectCount; i++) {
         struct SpawnObjectData data = { 0 };
         Vec3f scale = { 0 };
-        u8 ctx = 0;
-        packet_read(p, &ctx, sizeof(u8));
-        packet_read(p, &data.parentId, sizeof(u32));
-        packet_read(p, &data.model, sizeof(u32));
-        packet_read(p, &data.behaviorId, sizeof(u32));
-        packet_read(p, &data.activeFlags, sizeof(s16));
-        packet_read(p, &data.rawData, sizeof(u32) * OBJECT_NUM_FIELDS);
-        packet_read(p, &scale[0], sizeof(f32));
-        packet_read(p, &scale[1], sizeof(f32));
-        packet_read(p, &scale[2], sizeof(f32));
-        packet_read(p, &data.setHome, sizeof(u8));
-        packet_read(p, &data.globalPlayerIndex, sizeof(u8));
-        packet_read(p, &data.extendedModelId, sizeof(u16));
+        packet_read_bytes(p, &data, sizeof(data));
+        packet_read_bytes(p, &scale, sizeof(scale));
+#ifdef TARGET_WII_U
+        packet_spawn_swap_data(&data);
+        packet_spawn_swap_u32_words((u32*)scale, 3);
+#endif
 
         char* id = "unknown";
         char* name = "unknown";
@@ -218,13 +246,13 @@ void network_receive_spawn_objects(struct Packet* p) {
 
         void* behavior = (void*)get_behavior_from_id(data.behaviorId);
         struct Object* o = NULL;
-        if (ctx) { o = spawn_object(parentObj, data.model, behavior); }
+        if (data.ctx) { o = spawn_object(parentObj, data.model, behavior); }
         if (o == NULL) {
             LOG_ERROR("ERROR: failed to allocate object!");
             return;
         }
 
-        o->ctx = ctx;
+        o->ctx = data.ctx;
         o->globalPlayerIndex = data.globalPlayerIndex;
         o->coopFlags |= COOP_OBJ_FLAG_NETWORK;
         o->setHome = data.setHome;

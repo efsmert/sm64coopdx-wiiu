@@ -6,6 +6,12 @@
 #include "pc/debuglog.h"
 #include "pc/configfile.h"
 #include "pc/network/moderator_list.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define NETWORK_PLAYERS_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#else
+#define NETWORK_PLAYERS_WIIU_LOG(...)
+#endif
 
 static void network_send_to_network_players(u8 sendToLocalIndex) {
     SOFT_ASSERT(gNetworkType == NT_SERVER);
@@ -37,6 +43,23 @@ static void network_send_to_network_players(u8 sendToLocalIndex) {
         packet_write(&p, &gNetworkPlayers[i].name,               sizeof(u8) * MAX_CONFIG_STRING);
         packet_write(&p, &gNetworkPlayers[i].discordId,          sizeof(u8) * 64);
         LOG_INFO("send network player [%d == %d]", gNetworkPlayers[i].globalIndex, npType);
+#ifdef TARGET_WII_U
+        NETWORK_PLAYERS_WIIU_LOG(
+            "network_players: tx toLocal=%u entryLocal=%d type=%u global=%u seq=%u loc=(%d,%d,%d,%d) valid=(%u,%u) model=%u name='%s'\n",
+            (unsigned)sendToLocalIndex,
+            (int)i,
+            (unsigned)npType,
+            (unsigned)gNetworkPlayers[i].globalIndex,
+            (unsigned)gNetworkPlayers[i].currLevelAreaSeqId,
+            (int)gNetworkPlayers[i].currCourseNum,
+            (int)gNetworkPlayers[i].currActNum,
+            (int)gNetworkPlayers[i].currLevelNum,
+            (int)gNetworkPlayers[i].currAreaIndex,
+            (unsigned)gNetworkPlayers[i].currLevelSyncValid,
+            (unsigned)gNetworkPlayers[i].currAreaSyncValid,
+            (unsigned)gNetworkPlayers[i].modelIndex,
+            gNetworkPlayers[i].name);
+#endif
     }
 
     network_send_to(sendToLocalIndex, &p);
@@ -118,6 +141,24 @@ void network_receive_network_players(struct Packet *p) {
 
         u8 localIndex = network_player_connected(npType, globalIndex, modelIndex, &palette, playerName, discordId);
         LOG_INFO("received network player [%d == %d] (%d)", globalIndex, npType, localIndex);
+#ifdef TARGET_WII_U
+        NETWORK_PLAYERS_WIIU_LOG(
+            "network_players: rx fromLocal=%u entry=%d type=%u global=%u -> local=%u seq=%u loc=(%d,%d,%d,%d) valid=(%u,%u) model=%u name='%s'\n",
+            (unsigned)p->localIndex,
+            (int)i,
+            (unsigned)npType,
+            (unsigned)globalIndex,
+            (unsigned)localIndex,
+            (unsigned)levelAreaSeqId,
+            (int)courseNum,
+            (int)actNum,
+            (int)levelNum,
+            (int)areaIndex,
+            (unsigned)levelSyncValid,
+            (unsigned)areaSyncValid,
+            (unsigned)modelIndex,
+            playerName);
+#endif
         if (localIndex != UNKNOWN_GLOBAL_INDEX) {
             struct NetworkPlayer *np = &gNetworkPlayers[localIndex];
             if (localIndex != 0) {

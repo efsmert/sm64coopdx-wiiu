@@ -404,25 +404,8 @@ bool packet_read_lnt(struct Packet* p, struct LSTNetworkType* lnt) {
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 
-static bool smlua_cache_get_subtable(lua_State *L, int cacheRef, lua_Integer typeKey, bool create) {
-    void *cacheKey = (void *)(uintptr_t)(typeKey + 1);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, cacheRef); // cache table
-    lua_pushlightuserdata(L, cacheKey);
-    lua_gettable(L, -2); // cache[typeKey]
-    if (lua_istable(L, -1)) {
-        return true;
-    }
-    lua_pop(L, 1); // pop nil
-    if (!create) {
-        lua_pop(L, 1); // pop cache table
-        return false;
-    }
-
-    lua_newtable(L); // create subtable
-    lua_pushlightuserdata(L, cacheKey);
-    lua_pushvalue(L, -2); // duplicate subtable
-    lua_settable(L, -4); // cache[typeKey] = subtable
-    return true;
+inline static uintptr_t smlua_get_pointer_key(void *ptr, u16 lt) {
+    return (lt * 0x9E3779B97F4A7C15) ^ ((uintptr_t) ptr >> 3);
 }
 
 CObject *smlua_push_object(lua_State* L, u16 lot, void* p, void *extraInfo) {
@@ -432,14 +415,14 @@ CObject *smlua_push_object(lua_State* L, u16 lot, void* p, void *extraInfo) {
     }
     LUA_STACK_CHECK_BEGIN_NUM(L, 1);
 
-    smlua_cache_get_subtable(L, gSmLuaCObjects, lot, true); // stack: cache, subtable
-    lua_pushlightuserdata(L, p);
-    lua_gettable(L, -2); // subtable[p]
+    uintptr_t key = smlua_get_pointer_key(p, lot);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, gSmLuaCObjects);
+    lua_pushinteger(L, key);
+    lua_gettable(L, -2);
     if (lua_isuserdata(L, -1)) {
         CObject *cobj = lua_touserdata(L, -1);
         if (cobj && cobj->lot == lot && cobj->pointer == p) {
-            lua_remove(L, -2); // Remove subtable
-            lua_remove(L, -2); // Remove cache table
+            lua_remove(L, -2);
             return cobj;
         }
     }
@@ -452,11 +435,10 @@ CObject *smlua_push_object(lua_State* L, u16 lot, void* p, void *extraInfo) {
     cobject->info = extraInfo;
     lua_rawgeti(L, LUA_REGISTRYINDEX, gSmLuaCObjectMetatable);
     lua_setmetatable(L, -2);
-    lua_pushlightuserdata(L, p);
-    lua_pushvalue(L, -2); // Duplicate userdata
-    lua_settable(L, -4); // subtable[p] = userdata
-    lua_remove(L, -2); // Remove subtable
-    lua_remove(L, -2); // Remove cache table
+    lua_pushinteger(L, key);
+    lua_pushvalue(L, -2);
+    lua_settable(L, -4);
+    lua_remove(L, -2);
 
     LUA_STACK_CHECK_END(L);
 
@@ -470,28 +452,14 @@ CPointer *smlua_push_pointer(lua_State* L, u16 lvt, void* p, void *extraInfo) {
     }
     LUA_STACK_CHECK_BEGIN_NUM(L, 1);
 
-#ifdef TARGET_WII_U
-    // Wii U stability fallback:
-    // avoid registry cache-table churn for pointer userdata, which can corrupt
-    // Lua allocator state during early mod bootstrap (e.g. get_texture_info()).
-    CPointer *cpointer = lua_newuserdata(L, sizeof(CPointer));
-    cpointer->pointer = p;
-    cpointer->lvt = lvt;
-    cpointer->freed = false;
-    cpointer->info = extraInfo;
-    lua_rawgeti(L, LUA_REGISTRYINDEX, gSmLuaCPointerMetatable);
-    lua_setmetatable(L, -2);
-    LUA_STACK_CHECK_END(L);
-    return cpointer;
-#else
-    smlua_cache_get_subtable(L, gSmLuaCPointers, lvt, true); // stack: cache, subtable
-    lua_pushlightuserdata(L, p);
-    lua_gettable(L, -2); // subtable[p]
+    uintptr_t key = smlua_get_pointer_key(p, lvt);
+    lua_rawgeti(L, LUA_REGISTRYINDEX, gSmLuaCPointers);
+    lua_pushinteger(L, key);
+    lua_gettable(L, -2);
     if (lua_isuserdata(L, -1)) {
-        CPointer *cptr = lua_touserdata(L, -1);
+        CPointer *cptr = lua_touserdata(L, 1);
         if (cptr && cptr->lvt == lvt && cptr->pointer == p) {
-            lua_remove(L, -2); // Remove subtable
-            lua_remove(L, -2); // Remove cache table
+            lua_remove(L, -2);
             return cptr;
         }
     }
@@ -504,15 +472,13 @@ CPointer *smlua_push_pointer(lua_State* L, u16 lvt, void* p, void *extraInfo) {
     cpointer->info = extraInfo;
     lua_rawgeti(L, LUA_REGISTRYINDEX, gSmLuaCPointerMetatable);
     lua_setmetatable(L, -2);
-    lua_pushlightuserdata(L, p);
-    lua_pushvalue(L, -2); // Duplicate userdata
-    lua_settable(L, -4); // subtable[p] = userdata
-    lua_remove(L, -2); // Remove subtable
-    lua_remove(L, -2); // Remove cache table
+    lua_pushinteger(L, key);
+    lua_pushvalue(L, -2);
+    lua_settable(L, -4);
+    lua_remove(L, -2);
     LUA_STACK_CHECK_END(L);
 
     return cpointer;
-#endif
 }
 
 void smlua_push_integer_field(int index, const char* name, lua_Integer val) {
@@ -907,21 +873,21 @@ void smlua_free(void *ptr, u16 lot) {
     if (ptr && gLuaState) {
         lua_State *L = gLuaState;
         LUA_STACK_CHECK_BEGIN(L);
-        if (smlua_cache_get_subtable(L, gSmLuaCObjects, lot, false)) { // stack: cache, subtable
-            lua_pushlightuserdata(L, ptr);
-            lua_gettable(L, -2); // subtable[ptr]
-            CObject *obj = (CObject *) lua_touserdata(L, -1);
-            if (obj && obj->pointer == ptr) {
-                obj->freed = true;
-                lua_pop(L, 1); // pop obj
-                lua_pushlightuserdata(L, ptr);
-                lua_pushnil(L);
-                lua_settable(L, -3); // subtable[ptr] = nil
-            } else {
-                lua_pop(L, 1);
-            }
-            lua_pop(L, 2); // pop subtable + cache
+        uintptr_t key = smlua_get_pointer_key(ptr, lot);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, gSmLuaCObjects);
+        lua_pushinteger(L, key);
+        lua_gettable(L, -2);
+        CObject *obj = (CObject *) lua_touserdata(L, -1);
+        if (obj && obj->pointer == ptr) {
+            obj->freed = true;
+            lua_pop(L, 1);
+            lua_pushinteger(L, key);
+            lua_pushnil(L);
+            lua_settable(L, -3);
+        } else {
+            lua_pop(L, 1);
         }
+        lua_pop(L, 1);
         LUA_STACK_CHECK_END(L);
     }
     free(ptr);

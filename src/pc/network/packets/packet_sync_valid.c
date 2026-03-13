@@ -3,9 +3,19 @@
 #include "pc/lua/smlua_hooks.h"
 //#define DISABLE_MODULE_LOG 1
 #include "pc/debuglog.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define SYNC_VALID_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#else
+#define SYNC_VALID_WIIU_LOG(...)
+#endif
 
 void network_send_sync_valid(struct NetworkPlayer* toNp, s16 courseNum, s16 actNum, s16 levelNum, s16 areaIndex) {
     bool wasSyncValid = (toNp->currLevelSyncValid && toNp->currAreaSyncValid);
+    bool locationChanged = (toNp->currCourseNum != courseNum)
+        || (toNp->currActNum != actNum)
+        || (toNp->currLevelNum != levelNum)
+        || (toNp->currAreaIndex != areaIndex);
 
     // set the NetworkPlayers sync valid
     toNp->currLevelSyncValid = true;
@@ -15,9 +25,27 @@ void network_send_sync_valid(struct NetworkPlayer* toNp, s16 courseNum, s16 actN
         // the player is the server, no need to send sync valid
         gNetworkAreaSyncing = false;
 
+#ifdef TARGET_WII_U
+        SYNC_VALID_WIIU_LOG(
+            "sync_valid: local server wasValid=%u locChanged=%u np=(%d,%d,%d,%d) req=(%d,%d,%d,%d)\n",
+            (unsigned)wasSyncValid,
+            (unsigned)locationChanged,
+            (int)toNp->currCourseNum,
+            (int)toNp->currActNum,
+            (int)toNp->currLevelNum,
+            (int)toNp->currAreaIndex,
+            (int)courseNum,
+            (int)actNum,
+            (int)levelNum,
+            (int)areaIndex);
+#endif
+        if (locationChanged || !wasSyncValid) {
+            network_player_update_course_level(toNp, courseNum, actNum, levelNum, areaIndex);
+            network_send_level_area_inform();
+        }
+
         // call hooks
         if (!wasSyncValid) {
-            network_player_update_course_level(toNp, courseNum, actNum, levelNum, areaIndex);
             smlua_call_event_hooks(HOOK_ON_SYNC_VALID);
         }
         return;
@@ -62,12 +90,18 @@ void network_receive_sync_valid(struct Packet* p) {
     }
 
     bool wasSyncValid = (np->currLevelSyncValid && np->currAreaSyncValid);
+    bool locationChanged = (np->currCourseNum != courseNum)
+        || (np->currActNum != actNum)
+        || (np->currLevelNum != levelNum)
+        || ((areaIndex != -1) && (np->currAreaIndex != areaIndex));
     np->currLevelSyncValid = true;
     np->currAreaSyncValid = true;
 
-    if (np == gNetworkPlayerLocal && !wasSyncValid) {
+    if (locationChanged || (np == gNetworkPlayerLocal && !wasSyncValid)) {
         network_player_update_course_level(np, courseNum, actNum, levelNum, areaIndex);
-        smlua_call_event_hooks(HOOK_ON_SYNC_VALID);
+        if (np == gNetworkPlayerLocal && !wasSyncValid) {
+            smlua_call_event_hooks(HOOK_ON_SYNC_VALID);
+        }
     }
 
     // inform server

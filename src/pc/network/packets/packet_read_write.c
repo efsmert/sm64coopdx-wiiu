@@ -98,17 +98,24 @@ void packet_init(struct Packet* packet, enum PacketType packetType, bool reliabl
 
     // write location
     if (packet->levelAreaMustMatch) {
-        packet_write(packet, &gCurrCourseNum,  sizeof(u8));
-        packet_write(packet, &gCurrActStarNum, sizeof(u8));
+        // These globals are s16s. Serialize them through true u8 temporaries so
+        // big-endian targets don't copy the high byte into the wire header.
+        u8 courseNum = (u8)gCurrCourseNum;
+        u8 actNum = (u8)gCurrActStarNum;
+        u8 areaIndex = (u8)gCurrAreaIndex;
+        packet_write(packet, &courseNum,      sizeof(u8));
+        packet_write(packet, &actNum,         sizeof(u8));
         packet_write(packet, &gCurrLevelNum,   sizeof(s16));
-        packet_write(packet, &gCurrAreaIndex,  sizeof(u8));
+        packet_write(packet, &areaIndex,       sizeof(u8));
         packet->courseNum = gCurrCourseNum;
         packet->actNum    = gCurrActStarNum;
         packet->levelNum  = gCurrLevelNum;
         packet->areaIndex = gCurrAreaIndex;
     } else if (packet->levelMustMatch) {
-        packet_write(packet, &gCurrCourseNum,  sizeof(u8));
-        packet_write(packet, &gCurrActStarNum, sizeof(u8));
+        u8 courseNum = (u8)gCurrCourseNum;
+        u8 actNum = (u8)gCurrActStarNum;
+        packet_write(packet, &courseNum,       sizeof(u8));
+        packet_write(packet, &actNum,          sizeof(u8));
         packet_write(packet, &gCurrLevelNum,   sizeof(s16));
         packet->courseNum = gCurrCourseNum;
         packet->actNum    = gCurrActStarNum;
@@ -192,6 +199,20 @@ void packet_write(struct Packet* packet, void* data, u16 length) {
     packet->cursor     += length;
 }
 
+void packet_write_bytes(struct Packet* packet, const void* data, u16 length) {
+    if (data == NULL) { packet->error = true; return; }
+#ifdef DEBUG
+    assert(packet->dataLength + length <= PACKET_LENGTH);
+#endif
+    if (packet->cursor + length >= PACKET_LENGTH) {
+        SOFT_ASSERT(packet->cursor + length < PACKET_LENGTH);
+        packet->writeError = true;
+    }
+    memcpy(&packet->buffer[packet->cursor], data, length);
+    packet->dataLength += length;
+    packet->cursor     += length;
+}
+
 u8 packet_initial_read(struct Packet* packet) {
     // read packet type
     packet->packetType = packet->buffer[0];
@@ -246,6 +267,15 @@ void packet_read(struct Packet* packet, void* data, u16 length) {
 #else
     memcpy(data, src, length);
 #endif
+    packet->cursor = cursor + length;
+}
+
+void packet_read_bytes(struct Packet* packet, void* data, u16 length) {
+    u16 cursor = packet->cursor;
+    if (length == 0) { return; }
+    if (data == NULL) { packet->error = true; return; }
+    if (cursor + length >= PACKET_LENGTH) { packet->error = true; return; }
+    memcpy(data, &packet->buffer[cursor], length);
     packet->cursor = cursor + length;
 }
 

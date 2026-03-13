@@ -12,6 +12,22 @@
 #include "pc/lua/smlua_hooks.h"
 #include "pc/debuglog.h"
 
+#ifdef TARGET_WII_U
+static inline u32 packet_collect_coin_bswap_u32(u32 value) {
+    return __builtin_bswap32(value);
+}
+
+static void packet_collect_coin_swap_vec3f(f32* values) {
+    if (values == NULL) { return; }
+    for (u32 i = 0; i < 3; i++) {
+        u32 raw = 0;
+        memcpy(&raw, &values[i], sizeof(raw));
+        raw = packet_collect_coin_bswap_u32(raw);
+        memcpy(&values[i], &raw, sizeof(values[i]));
+    }
+}
+#endif
+
 extern s16 gCurrCourseNum, gCurrAreaIndex;
 
 // defined in sparkle_spawn_star.inc.c
@@ -52,11 +68,18 @@ static struct Object* find_nearest_coin(const BehaviorScript *behavior, f32* pos
 void network_send_collect_coin(struct Object* o) {
     if (gNetworkPlayerLocal == NULL || !gNetworkPlayerLocal->currAreaSyncValid) { return; }
     u32 behaviorId = get_id_from_behavior(o->behavior);
+    Vec3f pos = { 0 };
+    pos[0] = o->oPosX;
+    pos[1] = o->oPosY;
+    pos[2] = o->oPosZ;
+#ifdef TARGET_WII_U
+    packet_collect_coin_swap_vec3f(pos);
+#endif
 
     struct Packet p = { 0 };
     packet_init(&p, PACKET_COLLECT_COIN, true, PLMT_LEVEL);
     packet_write(&p, &behaviorId, sizeof(u32));
-    packet_write(&p, &o->oPosX, sizeof(f32) * 3);
+    packet_write(&p, &pos, sizeof(f32) * 3);
     packet_write(&p, &gMarioStates[0].numCoins, sizeof(s16));
     packet_write(&p, &o->oDamageOrCoinValue, sizeof(s32));
     packet_write(&p, &gCurrAreaIndex, sizeof(s16));
@@ -75,6 +98,9 @@ void network_receive_collect_coin(struct Packet* p) {
 
     packet_read(p, &behaviorId, sizeof(u32));
     packet_read(p, &pos, sizeof(f32) * 3);
+#ifdef TARGET_WII_U
+    packet_collect_coin_swap_vec3f(pos);
+#endif
     packet_read(p, &numCoins, sizeof(s16));
     packet_read(p, &coinValue, sizeof(s32));
     packet_read(p, &areaIndex, sizeof(s16));

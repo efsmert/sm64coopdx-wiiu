@@ -14,6 +14,25 @@
 #define MODS_WIIU_LOG(...)
 #endif
 
+static bool mods_is_arena_mod(const struct Mod* mod) {
+    return mod != NULL
+        && mod->relativePath[0] != '\0'
+        && strcmp(mod->relativePath, "arena") == 0;
+}
+
+static bool mods_has_file(const struct Mod* mod, const char* relativePath) {
+    if (mod == NULL || relativePath == NULL) {
+        return false;
+    }
+    for (u16 i = 0; i < mod->fileCount; i++) {
+        const struct ModFile* file = &mod->files[i];
+        if (strcmp(file->relativePath, relativePath) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
 #endif
@@ -176,6 +195,14 @@ void mods_activate(struct Mods* mods) {
         if (mod->enabled) {
             MODS_WIIU_LOG("mods_activate: enabling mod[%d] rel=%s files=%d base=%s\n",
                           i, mod->relativePath, mod->fileCount, mod->basePath);
+            if (mods_is_arena_mod(mod)) {
+                LOG_INFO("mods_activate: arena hasMain=%d hasFlag=%d hasPlayer=%d hasSpawn=%d fileCount=%u",
+                         mods_has_file(mod, "main.lua") ? 1 : 0,
+                         mods_has_file(mod, "arena-flag.lua") ? 1 : 0,
+                         mods_has_file(mod, "arena-player.lua") ? 1 : 0,
+                         mods_has_file(mod, "arena-spawn.lua") ? 1 : 0,
+                         mod->fileCount);
+            }
             mod->index = gActiveMods.entryCount;
             gActiveMods.entries[gActiveMods.entryCount++] = mod;
             gActiveMods.size += mod->size;

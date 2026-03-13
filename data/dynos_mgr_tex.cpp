@@ -2,7 +2,6 @@
 #include <set>
 #include <string>
 #include <vector>
-#include <whb/log.h>
 #include "dynos.cpp.h"
 extern "C" {
 #include "pc/gfx/gfx.h"

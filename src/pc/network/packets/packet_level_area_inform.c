@@ -7,6 +7,12 @@
 #include "pc/djui/djui.h"
 #include "game/level_info.h"
 #include "game/mario_misc.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define LEVEL_AREA_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#else
+#define LEVEL_AREA_WIIU_LOG(...)
+#endif
 
 void network_send_level_area_inform(void) {
     struct NetworkPlayer* np = gNetworkPlayerLocal;
@@ -24,6 +30,17 @@ void network_send_level_area_inform(void) {
     packet_write(&p, &np->currLevelSyncValid, sizeof(u8));
     packet_write(&p, &np->currAreaSyncValid,  sizeof(u8));
     network_send(&p);
+
+    LEVEL_AREA_WIIU_LOG(
+        "level_area_inform: tx seq=%u global=%u loc=(%d,%d,%d,%d) valid=(%u,%u)\n",
+        (unsigned)np->currLevelAreaSeqId,
+        (unsigned)np->globalIndex,
+        (int)np->currCourseNum,
+        (int)np->currActNum,
+        (int)np->currLevelNum,
+        (int)np->currAreaIndex,
+        (unsigned)np->currLevelSyncValid,
+        (unsigned)np->currAreaSyncValid);
 
     LOG_INFO("tx level area inform for global %d: (%d, %d, %d, %d)", np->globalIndex, np->currCourseNum, np->currActNum, np->currLevelNum, np->currAreaIndex);
 }

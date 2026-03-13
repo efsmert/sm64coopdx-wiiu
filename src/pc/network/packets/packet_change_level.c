@@ -42,6 +42,9 @@ void network_send_change_level(void) {
 
     if (gNetworkType == NT_SERVER) {
         player_changed_level(gNetworkPlayerLocal, gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex);
+        // Server-local level changes need an explicit location broadcast so
+        // remote peers update the host's tracked level/area immediately.
+        network_send_level_area_inform();
         return;
     }
 

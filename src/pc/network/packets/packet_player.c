@@ -17,6 +17,12 @@
 #include "pc/djui/djui_language.h"
 #include "pc/debuglog.h"
 #include "src/game/hardcoded.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define PACKET_PLAYER_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#else
+#define PACKET_PLAYER_WIIU_LOG(...)
+#endif
 
 #pragma pack(1)
 struct PacketPlayerData {
@@ -81,6 +87,29 @@ struct PacketPlayerData {
 };
 #pragma pack()
 
+static inline u32 packet_player_load_u32_le(const u8* src) {
+    return (u32)src[0]
+        | ((u32)src[1] << 8)
+        | ((u32)src[2] << 16)
+        | ((u32)src[3] << 24);
+}
+
+static inline u16 packet_player_load_u16_le(const u8* src) {
+    return (u16)src[0] | ((u16)src[1] << 8);
+}
+
+static inline f32 packet_player_u32_as_f32(u32 value) {
+    f32 out = 0.0f;
+    memcpy(&out, &value, sizeof(out));
+    return out;
+}
+
+static inline u32 packet_player_f32_as_u32(f32 value) {
+    u32 out = 0;
+    memcpy(&out, &value, sizeof(out));
+    return out;
+}
+
 #ifdef TARGET_WII_U
 static inline u16 packet_player_bswap_u16(u16 value) {
     return __builtin_bswap16(value);
@@ -90,20 +119,37 @@ static inline u32 packet_player_bswap_u32(u32 value) {
     return __builtin_bswap32(value);
 }
 
+static inline u32 packet_player_swap_u16_pair_word(u32 value) {
+    u16 hi = (u16)(value >> 16);
+    u16 lo = (u16)(value & 0xFFFF);
+    return ((u32)packet_player_bswap_u16(hi) << 16) | (u32)packet_player_bswap_u16(lo);
+}
+
 static inline f32 packet_player_bswap_f32(f32 value) {
-    u32 raw = 0;
-    memcpy(&raw, &value, sizeof(raw));
+    u32 raw = packet_player_f32_as_u32(value);
     raw = packet_player_bswap_u32(raw);
-    memcpy(&value, &raw, sizeof(value));
-    return value;
+    return packet_player_u32_as_f32(raw);
+}
+
+static void packet_player_swap_u32_words(u32* words, u32 count) {
+    if (words == NULL) { return; }
+    for (u32 i = 0; i < count; i++) {
+        // Most regular object slots are full 32-bit scalar values, but a few
+        // common slots are packed s16 pairs in the upstream object layout.
+        // Those need per-halfword swapping instead of a full u32 byte reverse,
+        // otherwise the two 16-bit fields trade places on the wire.
+        if (i == 0x02 || i == 0x4C) {
+            words[i] = packet_player_swap_u16_pair_word(words[i]);
+        } else {
+            words[i] = packet_player_bswap_u32(words[i]);
+        }
+    }
 }
 
 static void packet_player_data_swap_endian(struct PacketPlayerData* data) {
     if (data == NULL) { return; }
 
-    for (u32 i = 0; i < OBJECT_NUM_REGULAR_FIELDS; i++) {
-        data->rawData[i] = packet_player_bswap_u32(data->rawData[i]);
-    }
+    packet_player_swap_u32_words(data->rawData, OBJECT_NUM_REGULAR_FIELDS);
 
     data->cRawStickX = (s16)packet_player_bswap_u16((u16)data->cRawStickX);
     data->cRawStickY = (s16)packet_player_bswap_u16((u16)data->cRawStickY);
@@ -151,6 +197,54 @@ static void packet_player_data_swap_endian(struct PacketPlayerData* data) {
     data->usedSyncID = packet_player_bswap_u32(data->usedSyncID);
     data->platformSyncID = packet_player_bswap_u32(data->platformSyncID);
     data->dialogId = (s32)packet_player_bswap_u32((u32)data->dialogId);
+}
+
+static void packet_player_log_wire_summary(const char* tag, u8 actorGlobalIndex, const u8* payload) {
+    const u32 animState = packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)));
+    const u32 opacity = packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)));
+    const u32 drawDistanceBits = packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x45 * sizeof(u32)));
+    const f32 rawPosX = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x06 * sizeof(u32))));
+    const f32 rawPosY = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x07 * sizeof(u32))));
+    const f32 rawPosZ = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x08 * sizeof(u32))));
+    const s32 rawFacePitch = (s32)packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x12 * sizeof(u32)));
+    const s32 rawFaceYaw = (s32)packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x13 * sizeof(u32)));
+    const s32 rawFaceRoll = (s32)packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x14 * sizeof(u32)));
+    const u16 nodeFlags = packet_player_load_u16_le(payload + offsetof(struct PacketPlayerData, nodeFlags));
+    const u32 action = packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, action));
+    const f32 posX = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, pos) + (0 * sizeof(f32))));
+    const f32 posY = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, pos) + (1 * sizeof(f32))));
+    const f32 posZ = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, pos) + (2 * sizeof(f32))));
+
+    PACKET_PLAYER_WIIU_LOG(
+        "packet_player: %s global=%u node=%04x action=%08x anim=%u opacity=%u drawDist=%.2f pos=(%.2f,%.2f,%.2f) rawPos=(%.2f,%.2f,%.2f) rawFace=(%d,%d,%d)\n",
+        tag,
+        (unsigned)actorGlobalIndex,
+        (unsigned)nodeFlags,
+        (unsigned)action,
+        (unsigned)animState,
+        (unsigned)opacity,
+        packet_player_u32_as_f32(drawDistanceBits),
+        posX, posY, posZ,
+        rawPosX, rawPosY, rawPosZ,
+        (int)rawFacePitch, (int)rawFaceYaw, (int)rawFaceRoll);
+
+    PACKET_PLAYER_WIIU_LOG(
+        "packet_player: %s bytes anim=%02x %02x %02x %02x opacity=%02x %02x %02x %02x node=%02x %02x action=%02x %02x %02x %02x\n",
+        tag,
+        payload[offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)) + 0],
+        payload[offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)) + 1],
+        payload[offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)) + 2],
+        payload[offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)) + 3],
+        payload[offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)) + 0],
+        payload[offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)) + 1],
+        payload[offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)) + 2],
+        payload[offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)) + 3],
+        payload[offsetof(struct PacketPlayerData, nodeFlags) + 0],
+        payload[offsetof(struct PacketPlayerData, nodeFlags) + 1],
+        payload[offsetof(struct PacketPlayerData, action) + 0],
+        payload[offsetof(struct PacketPlayerData, action) + 1],
+        payload[offsetof(struct PacketPlayerData, action) + 2],
+        payload[offsetof(struct PacketPlayerData, action) + 3]);
 }
 #endif
 
@@ -292,9 +386,91 @@ static void write_packet_data(struct PacketPlayerData* data, struct MarioState* 
     m->dialogId = data->dialogId;
 }
 
+static void network_player_refresh_local_sync_state(void) {
+    if (gNetworkPlayerLocal == NULL) { return; }
+    if (gMarioStates[0].marioObj == NULL) { return; }
+    if (gCurrentArea == NULL) { return; }
+
+    extern s16 gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex;
+
+    bool locationMatches = (gNetworkPlayerLocal->currCourseNum == gCurrCourseNum)
+        && (gNetworkPlayerLocal->currActNum == gCurrActStarNum)
+        && (gNetworkPlayerLocal->currLevelNum == gCurrLevelNum)
+        && (gNetworkPlayerLocal->currAreaIndex == gCurrAreaIndex);
+
+    if (locationMatches && gNetworkPlayerLocal->currLevelSyncValid && gNetworkPlayerLocal->currAreaSyncValid) {
+        return;
+    }
+
+    if (!locationMatches) {
+        network_player_update_course_level(gNetworkPlayerLocal, gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex);
+    }
+
+#ifdef TARGET_WII_U
+    PACKET_PLAYER_WIIU_LOG(
+        "packet_player: refresh sync np=(%d,%d,%d,%d) curr=(%d,%d,%d,%d) valid=(%u,%u)\n",
+        (int)gNetworkPlayerLocal->currCourseNum,
+        (int)gNetworkPlayerLocal->currActNum,
+        (int)gNetworkPlayerLocal->currLevelNum,
+        (int)gNetworkPlayerLocal->currAreaIndex,
+        (int)gCurrCourseNum,
+        (int)gCurrActStarNum,
+        (int)gCurrLevelNum,
+        (int)gCurrAreaIndex,
+        (unsigned)gNetworkPlayerLocal->currLevelSyncValid,
+        (unsigned)gNetworkPlayerLocal->currAreaSyncValid);
+#endif
+    network_send_sync_valid(gNetworkPlayerLocal, gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex);
+}
+
+static void network_player_maybe_send_local_level_area_inform(void) {
+    if (gNetworkPlayerLocal == NULL) { return; }
+    if (gMarioStates[0].marioObj == NULL) { return; }
+    if (gCurrentArea == NULL) { return; }
+
+    extern s16 gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex;
+
+    static s16 sLastInformCourseNum = -1;
+    static s16 sLastInformActNum = -1;
+    static s16 sLastInformLevelNum = -1;
+    static s16 sLastInformAreaIndex = -1;
+    static u32 sInformCooldown = 0;
+
+    bool locationChanged = (sLastInformCourseNum != gCurrCourseNum)
+        || (sLastInformActNum != gCurrActStarNum)
+        || (sLastInformLevelNum != gCurrLevelNum)
+        || (sLastInformAreaIndex != gCurrAreaIndex);
+
+    if (!locationChanged && ++sInformCooldown < 30) {
+        return;
+    }
+
+    sLastInformCourseNum = gCurrCourseNum;
+    sLastInformActNum = gCurrActStarNum;
+    sLastInformLevelNum = gCurrLevelNum;
+    sLastInformAreaIndex = gCurrAreaIndex;
+    sInformCooldown = 0;
+#ifdef TARGET_WII_U
+    PACKET_PLAYER_WIIU_LOG(
+        "packet_player: forcing level-area inform loc=(%d,%d,%d,%d) loaded=%u valid=(%u,%u)\n",
+        (int)gCurrCourseNum,
+        (int)gCurrActStarNum,
+        (int)gCurrLevelNum,
+        (int)gCurrAreaIndex,
+        (unsigned)gNetworkAreaLoaded,
+        (unsigned)gNetworkPlayerLocal->currLevelSyncValid,
+        (unsigned)gNetworkPlayerLocal->currAreaSyncValid);
+#endif
+    network_send_level_area_inform();
+}
+
 void network_send_player(u8 localIndex) {
     if (gMarioStates[localIndex].marioObj == NULL) { return; }
     if (gDjuiInMainMenu) { return; }
+    if (localIndex == 0) {
+        network_player_refresh_local_sync_state();
+        network_player_maybe_send_local_level_area_inform();
+    }
     if (gNetworkPlayerLocal == NULL || !gNetworkPlayerLocal->currAreaSyncValid) { return; }
 
     struct PacketPlayerData data = { 0 };
@@ -303,12 +479,35 @@ void network_send_player(u8 localIndex) {
     struct Packet p = { 0 };
     packet_init(&p, PACKET_PLAYER, false, PLMT_AREA);
     packet_write(&p, &gNetworkPlayers[localIndex].globalIndex, sizeof(u8));
-#ifdef TARGET_WII_U
+    u16 payloadOffset = p.cursor;
     struct PacketPlayerData wireData = data;
+#ifdef TARGET_WII_U
     packet_player_data_swap_endian(&wireData);
-    packet_write(&p, &wireData, sizeof(struct PacketPlayerData));
-#else
-    packet_write(&p, &data, sizeof(struct PacketPlayerData));
+#endif
+    packet_write_bytes(&p, &wireData, sizeof(wireData));
+
+#ifdef TARGET_WII_U
+    static u32 sPacketPlayerLogTimer = 0;
+    if ((++sPacketPlayerLogTimer % 30) == 0) {
+        PACKET_PLAYER_WIIU_LOG(
+            "packet_player: tx local=%u global=%u action=%08x valid=%u loc=(%d,%d,%d,%d) pos=(%.2f,%.2f,%.2f)\n",
+            (unsigned)localIndex,
+            (unsigned)gNetworkPlayers[localIndex].globalIndex,
+            (unsigned)data.action,
+            (unsigned)gNetworkPlayerLocal->currAreaSyncValid,
+            (int)gNetworkPlayerLocal->currCourseNum,
+            (int)gNetworkPlayerLocal->currActNum,
+            (int)gNetworkPlayerLocal->currLevelNum,
+            (int)gNetworkPlayerLocal->currAreaIndex,
+            data.pos[0], data.pos[1], data.pos[2]);
+        PACKET_PLAYER_WIIU_LOG(
+            "packet_player: tx render node=%04x opacity=%d drawDist=%.2f anim=%d\n",
+            (unsigned)(u16)data.nodeFlags,
+            (int)data.rawData[0x3D],
+            packet_player_u32_as_f32(data.rawData[0x45]),
+            (int)data.rawData[0x1A]);
+        packet_player_log_wire_summary("tx-wire", gNetworkPlayers[localIndex].globalIndex, &p.buffer[payloadOffset]);
+    }
 #endif
     network_send(&p);
 }
@@ -325,7 +524,17 @@ void network_receive_player(struct Packet* p) {
     struct MarioState* m = &gMarioStates[np->localIndex];
     if (m == NULL || m->marioObj == NULL) { return; }
 
-    if (gNetworkType == NT_SERVER && *((u32*)(p->buffer + p->cursor + offsetof(struct PacketPlayerData, action))) == ACT_DEBUG_FREE_MOVE) {
+#ifdef TARGET_WII_U
+    static u32 sPacketPlayerRxLogTimer = 0;
+    const u8* payloadStart = p->buffer + p->cursor;
+    if ((++sPacketPlayerRxLogTimer % 30) == 0) {
+        packet_player_log_wire_summary("rx-wire", globalIndex, payloadStart);
+    }
+#endif
+
+    const u8* actionPtr = p->buffer + p->cursor + offsetof(struct PacketPlayerData, action);
+    u32 incomingAction = packet_player_load_u32_le(actionPtr);
+    if (gNetworkType == NT_SERVER && incomingAction == ACT_DEBUG_FREE_MOVE) {
 #ifdef DEVELOPMENT
         if (m->action != ACT_DEBUG_FREE_MOVE) {
             construct_player_popup(np, DLANG(NOTIF, DEBUG_FLY), NULL);
@@ -353,7 +562,7 @@ void network_receive_player(struct Packet* p) {
 
     // load mario information from packet
     struct PacketPlayerData data = { 0 };
-    packet_read(p, &data, sizeof(struct PacketPlayerData));
+    packet_read_bytes(p, &data, sizeof(data));
 #ifdef TARGET_WII_U
     packet_player_data_swap_endian(&data);
 #endif
@@ -375,6 +584,23 @@ void network_receive_player(struct Packet* p) {
                       &heldSyncID, &heldBySyncID,
                       &riddenSyncID, &interactSyncID,
                       &usedSyncID, &platformSyncID);
+
+    // Remote Mario objects must stay attached to the active render area.
+    // Otherwise the packet can apply successfully but the player still won't
+    // draw because geo_process_object skips objects in other areas.
+    if (gCurrentArea != NULL) {
+        m->marioObj->header.gfx.areaIndex = gCurrentArea->index;
+        m->marioObj->header.gfx.activeAreaIndex = gCurrentArea->index;
+    }
+
+    // A successfully applied remote player packet should leave the recipient's
+    // Mario node renderable. Action-specific code still controls cases like
+    // bubbling/fades, but an inactive node here can make the player exist
+    // physically while never drawing.
+    m->marioObj->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+    if (m->action != ACT_BUBBLED) {
+        m->marioObj->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
+    }
 
     // read custom flags
     m->freeze = GET_BIT(customFlags, 0);

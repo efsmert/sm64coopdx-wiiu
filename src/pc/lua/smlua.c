@@ -359,125 +359,9 @@ static void smlua_install_compat_globals(void) {
     smlua_exec_buffer(sCompatGlobals, strlen(sCompatGlobals), "@compat_globals");
 }
 
-#define LUA_BOM_11 0x0000000000005678llu
-#define LUA_BOM_19 0x4077280000000000llu
-
 static bool smlua_path_ptr_is_plausible(const char* path) {
     uintptr_t p = (uintptr_t)path;
     return path != NULL && p >= 0x00100000u && p <= 0x7fffffffu;
-}
-
-static bool smlua_check_binary_header(struct ModFile *file) {
-    if (!smlua_path_ptr_is_plausible(file->cachedPath)) {
-        LOG_LUA("Failed to load lua script: invalid path pointer.");
-        return false;
-    }
-    FILE *f = f_open_r(file->cachedPath);
-    if (f) {
-
-        // Read signature
-        char signature[sizeof(LUA_SIGNATURE)] = { 0 };
-        if (f_read(signature, 1, sizeof(LUA_SIGNATURE) - 1, f) != sizeof(LUA_SIGNATURE) - 1) {
-            LOG_LUA("Failed to load lua script '%s': File too short.", file->cachedPath);
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-
-        // Check signature
-        if (strcmp(signature, LUA_SIGNATURE) != 0) {
-            f_close(f);
-            return true; // Not a binary lua
-        }
-
-        // Read version number
-        u8 version;
-        if (f_read(&version, 1, 1, f) != 1) {
-            LOG_LUA("Failed to load lua script '%s': File too short.", file->cachedPath);
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-
-        // Check version number
-        u8 expectedVersion = strtoul(LUA_VERSION_MAJOR LUA_VERSION_MINOR, NULL, 16);
-        if (version != expectedVersion) {
-            LOG_LUA("Failed to load lua script '%s': Lua versions don't match (%X, expected %X).", file->cachedPath, version, expectedVersion);
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-
-        // Read the rest of the header
-        u8 header[28];
-        if (f_read(header, 1, 28, f) != 28) {
-            LOG_LUA("Failed to load lua script '%s': File too short.", file->cachedPath);
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-
-        // The following errors are silent (they're due to non-matching endianness/bitness and shouldn't prevent the rest of the mod from loading)
-
-        // Check endianness
-        u64 bom11 = *((u64 *) (header + 12));
-        u64 bom19 = *((u64 *) (header + 20));
-        if (bom11 != LUA_BOM_11) {
-            LOG_ERROR("Failed to load lua script '%s': BOM at offset 0x11 don't match (%016llX, expected %016llX).", file->cachedPath, bom11, LUA_BOM_11);
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-        if (bom19 != LUA_BOM_19) {
-            LOG_ERROR("Failed to load lua script '%s': BOM at offset 0x19 don't match (%016llX, expected %016llX).", file->cachedPath, bom19, LUA_BOM_19);
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-
-        // Check sizes
-        u8 sizeOfCInteger = header[7];
-        u8 sizeOfCPointer = header[8];
-        u8 sizeOfCFloat = header[9];
-        u8 sizeOfLuaInteger = header[10];
-        u8 sizeOfLuaNumber = header[11];
-        if (sizeOfCInteger != sizeof(int)) {
-            LOG_ERROR("Failed to load lua script '%s': sizes of C Integer don't match (%d, expected %llu).", file->cachedPath, sizeOfCInteger, (long long unsigned)sizeof(int));
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-        if (sizeOfCPointer != sizeof(void *)) { // 4 for 32-bit architectures, 8 for 64-bit
-            LOG_ERROR("Failed to load lua script '%s': sizes of C Pointer don't match (%d, expected %llu).", file->cachedPath, sizeOfCPointer, (long long unsigned)sizeof(void *));
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-        if (sizeOfCFloat != sizeof(float)) {
-            LOG_ERROR("Failed to load lua script '%s': sizes of C Float don't match (%d, expected %llu).", file->cachedPath, sizeOfCFloat, (long long unsigned)sizeof(float));
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-        if (sizeOfLuaInteger != sizeof(LUA_INTEGER)) {
-            LOG_ERROR("Failed to load lua script '%s': sizes of Lua Integer don't match (%d, expected %llu).", file->cachedPath, sizeOfLuaInteger, (long long unsigned)sizeof(LUA_INTEGER));
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-        if (sizeOfLuaNumber != sizeof(LUA_NUMBER)) {
-            LOG_ERROR("Failed to load lua script '%s': sizes of Lua Number don't match (%d, expected %llu).", file->cachedPath, sizeOfLuaNumber, (long long unsigned)sizeof(LUA_NUMBER));
-            f_close(f);
-            f_delete(f);
-            return false;
-        }
-
-        // All's good
-        f_close(f);
-        return true;
-    }
-    LOG_LUA("Failed to load lua script '%s': File not found.", file->cachedPath);
-    return false;
 }
 
 int smlua_load_script(struct Mod* mod, struct ModFile* file, u16 remoteIndex, bool isModInit) {
@@ -487,7 +371,6 @@ int smlua_load_script(struct Mod* mod, struct ModFile* file, u16 remoteIndex, bo
                 (mod != NULL && mod->name != NULL) ? mod->name : "unknown");
         return LUA_ERRFILE;
     }
-    if (!smlua_check_binary_header(file)) { return LUA_ERRMEM; }
 
     lua_State* L = gLuaState;
 
@@ -813,6 +696,9 @@ void smlua_init(void) {
         LOG_INFO("    %s", mod->relativePath);
 #ifdef TARGET_WII_U
         SMLUA_WIIU_LOG("smlua: load mod '%s' files=%d\n", mod->relativePath, mod->fileCount);
+        u32 wiiuRootLuaCandidates = 0;
+        u32 wiiuRootLuaLoaded = 0;
+        u32 wiiuRootLuaCached = 0;
 #endif
         gLuaLoadingMod = mod;
         gLuaActiveMod = mod;
@@ -831,6 +717,10 @@ void smlua_init(void) {
                 continue;
             }
 
+#ifdef TARGET_WII_U
+            wiiuRootLuaCandidates++;
+            SMLUA_WIIU_LOG("smlua: root file candidate '%s/%s'\n", mod->relativePath, file->relativePath);
+#endif
             gLuaActiveModFile = file;
 
             // file has been required by some module before this
@@ -842,11 +732,23 @@ void smlua_init(void) {
 
                 if (rc == LUA_OK) {
                     smlua_cache_module_result(L, mod, file, prevTop);
+#ifdef TARGET_WII_U
+                    wiiuRootLuaLoaded++;
+#endif
                 }
+            } else {
+#ifdef TARGET_WII_U
+                wiiuRootLuaCached++;
+                SMLUA_WIIU_LOG("smlua: root file cached '%s/%s'\n", mod->relativePath, file->relativePath);
+#endif
             }
 
             lua_settop(L, 0);
         }
+#ifdef TARGET_WII_U
+        SMLUA_WIIU_LOG("smlua: mod summary '%s' rootCandidates=%u loaded=%u cached=%u\n",
+                       mod->relativePath, wiiuRootLuaCandidates, wiiuRootLuaLoaded, wiiuRootLuaCached);
+#endif
         gLuaActiveMod = NULL;
         gLuaActiveModFile = NULL;
         gLuaLoadingMod = NULL;

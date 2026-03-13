@@ -244,6 +244,17 @@ void network_on_init_area(void) {
 void network_on_loaded_area(void) {
     area_remove_sync_ids_clear();
     struct NetworkPlayer* np = gNetworkPlayerLocal;
+#ifdef TARGET_WII_U
+    NET_WIIU_LOG(
+        "network_on_loaded_area: curr=(%d,%d,%d,%d) np=%p valid=(%u,%u)\n",
+        (int)gCurrCourseNum,
+        (int)gCurrActStarNum,
+        (int)gCurrLevelNum,
+        (int)gCurrAreaIndex,
+        np,
+        (unsigned)((np != NULL) ? np->currLevelSyncValid : 0),
+        (unsigned)((np != NULL) ? np->currAreaSyncValid : 0));
+#endif
     if (np != NULL) {
         bool levelMatch = (np->currCourseNum == gCurrCourseNum
                            && np->currActNum == gCurrActStarNum
@@ -451,16 +462,38 @@ void network_send(struct Packet* p) {
 
         // don't send a packet to a player that can't receive it
         if (p->levelAreaMustMatch) {
-            if (p->courseNum != np->currCourseNum) { continue; }
-            if (p->actNum    != np->currActNum)    { continue; }
-            if (p->levelNum  != np->currLevelNum)  { continue; }
-            if (p->areaIndex != np->currAreaIndex) { continue; }
+            bool mismatch = (p->courseNum != np->currCourseNum)
+                || (p->actNum != np->currActNum)
+                || (p->levelNum != np->currLevelNum)
+                || (p->areaIndex != np->currAreaIndex);
+            if (mismatch) {
+#ifdef TARGET_WII_U
+                if (p->packetType == PACKET_PLAYER) {
+                    NET_WIIU_LOG(
+                        "network_send: skip PACKET_PLAYER to local=%d global=%u packet=(%d,%d,%d,%d) peer=(%d,%d,%d,%d)\n",
+                        i,
+                        (unsigned)np->globalIndex,
+                        (int)p->courseNum, (int)p->actNum, (int)p->levelNum, (int)p->areaIndex,
+                        (int)np->currCourseNum, (int)np->currActNum, (int)np->currLevelNum, (int)np->currAreaIndex);
+                }
+#endif
+                continue;
+            }
         } else if (p->levelMustMatch) {
             if (p->courseNum != np->currCourseNum) { continue; }
             if (p->actNum    != np->currActNum)    { continue; }
             if (p->levelNum  != np->currLevelNum)  { continue; }
         }
 
+#ifdef TARGET_WII_U
+        if (p->packetType == PACKET_PLAYER) {
+            NET_WIIU_LOG(
+                "network_send: send PACKET_PLAYER to local=%d global=%u packet=(%d,%d,%d,%d)\n",
+                i,
+                (unsigned)np->globalIndex,
+                (int)p->courseNum, (int)p->actNum, (int)p->levelNum, (int)p->areaIndex);
+        }
+#endif
         p->localIndex = i;
         p->sent = false;
         network_send_to(i, p);

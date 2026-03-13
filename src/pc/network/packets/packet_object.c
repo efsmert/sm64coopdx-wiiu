@@ -14,6 +14,54 @@
 #include "pc/debuglog.h"
 #include "pc/utils/misc.h"
 
+#ifdef TARGET_WII_U
+static inline u16 packet_object_bswap_u16(u16 value) {
+    return __builtin_bswap16(value);
+}
+
+static inline u32 packet_object_bswap_u32(u32 value) {
+    return __builtin_bswap32(value);
+}
+
+static void packet_object_swap_u32_words(u32* words, u32 count) {
+    if (words == NULL) { return; }
+    for (u32 i = 0; i < count; i++) {
+        words[i] = packet_object_bswap_u32(words[i]);
+    }
+}
+#endif
+
+struct PacketObjectStandardFields {
+    u32 posAndMisc[7];
+    u32 action;
+    u32 prevAction;
+    u32 subAction;
+    u32 interactStatus;
+    u32 heldState;
+    u32 moveAngleYaw;
+    u32 timer;
+    s16 activeFlags;
+    s16 nodeFlags;
+    s32 intangibleTimer;
+};
+
+#ifdef TARGET_WII_U
+static void packet_object_swap_standard_fields(struct PacketObjectStandardFields* data) {
+    if (data == NULL) { return; }
+    packet_object_swap_u32_words(data->posAndMisc, 7);
+    data->action = packet_object_bswap_u32(data->action);
+    data->prevAction = packet_object_bswap_u32(data->prevAction);
+    data->subAction = packet_object_bswap_u32(data->subAction);
+    data->interactStatus = packet_object_bswap_u32(data->interactStatus);
+    data->heldState = packet_object_bswap_u32(data->heldState);
+    data->moveAngleYaw = packet_object_bswap_u32(data->moveAngleYaw);
+    data->timer = packet_object_bswap_u32(data->timer);
+    data->activeFlags = (s16)packet_object_bswap_u16((u16)data->activeFlags);
+    data->nodeFlags = (s16)packet_object_bswap_u16((u16)data->nodeFlags);
+    data->intangibleTimer = (s32)packet_object_bswap_u32((u32)data->intangibleTimer);
+}
+#endif
+
 struct DelayedPacketObject {
     struct Packet p;
     struct DelayedPacketObject* next;
@@ -150,7 +198,14 @@ static void packet_write_object_full_sync(struct Packet* p, struct Object* o) {
     if (!so || !so->fullObjectSync) { return; }
 
     // write all of raw data
+#ifdef TARGET_WII_U
+    u32 rawData[OBJECT_NUM_FIELDS];
+    memcpy(rawData, o->rawData.asU32, sizeof(rawData));
+    packet_object_swap_u32_words(rawData, OBJECT_NUM_FIELDS);
+    packet_write(p, rawData, sizeof(rawData));
+#else
     packet_write(p, o->rawData.asU32, sizeof(u32) * OBJECT_NUM_FIELDS);
+#endif
 }
 
 static void packet_read_object_full_sync(struct Packet* p, struct Object* o) {
@@ -158,7 +213,14 @@ static void packet_read_object_full_sync(struct Packet* p, struct Object* o) {
     if (!so || !so->fullObjectSync) { return; }
 
     // read all of raw data
+#ifdef TARGET_WII_U
+    u32 rawData[OBJECT_NUM_FIELDS];
+    packet_read(p, rawData, sizeof(rawData));
+    packet_object_swap_u32_words(rawData, OBJECT_NUM_FIELDS);
+    memcpy(o->rawData.asU32, rawData, sizeof(rawData));
+#else
     packet_read(p, o->rawData.asU32, sizeof(u32) * OBJECT_NUM_FIELDS);
+#endif
 }
 
 // ----- standard fields ----- //
@@ -171,18 +233,22 @@ static void packet_write_object_standard_fields(struct Packet* p, struct Object*
     if (so->maxSyncDistance == SYNC_DISTANCE_ONLY_EVENTS) { return; }
     if (!so->hasStandardFields) { return; }
 
-    // write the standard fields
-    packet_write(p, &o->oPosX, sizeof(u32) * 7);
-    packet_write(p, &o->oAction, sizeof(u32));
-    packet_write(p, &o->oPrevAction, sizeof(u32));
-    packet_write(p, &o->oSubAction, sizeof(u32));
-    packet_write(p, &o->oInteractStatus, sizeof(u32));
-    packet_write(p, &o->oHeldState, sizeof(u32));
-    packet_write(p, &o->oMoveAngleYaw, sizeof(u32));
-    packet_write(p, &o->oTimer, sizeof(u32));
-    packet_write(p, &o->activeFlags, sizeof(s16));
-    packet_write(p, &o->header.gfx.node.flags, sizeof(s16));
-    packet_write(p, &o->oIntangibleTimer, sizeof(s32));
+    struct PacketObjectStandardFields data = { 0 };
+    memcpy(data.posAndMisc, &o->oPosX, sizeof(data.posAndMisc));
+    data.action = o->oAction;
+    data.prevAction = o->oPrevAction;
+    data.subAction = o->oSubAction;
+    data.interactStatus = o->oInteractStatus;
+    data.heldState = o->oHeldState;
+    data.moveAngleYaw = o->oMoveAngleYaw;
+    data.timer = o->oTimer;
+    data.activeFlags = o->activeFlags;
+    data.nodeFlags = o->header.gfx.node.flags;
+    data.intangibleTimer = o->oIntangibleTimer;
+#ifdef TARGET_WII_U
+    packet_object_swap_standard_fields(&data);
+#endif
+    packet_write(p, &data, sizeof(data));
 }
 
 static void packet_read_object_standard_fields(struct Packet* p, struct Object* o) {
@@ -193,18 +259,22 @@ static void packet_read_object_standard_fields(struct Packet* p, struct Object* 
     if (so->maxSyncDistance == SYNC_DISTANCE_ONLY_EVENTS) { return; }
     if (!so->hasStandardFields) { return; }
 
-    // read the standard fields
-    packet_read(p, &o->oPosX, sizeof(u32) * 7);
-    packet_read(p, &o->oAction, sizeof(u32));
-    packet_read(p, &o->oPrevAction, sizeof(u32));
-    packet_read(p, &o->oSubAction, sizeof(u32));
-    packet_read(p, &o->oInteractStatus, sizeof(u32));
-    packet_read(p, &o->oHeldState, sizeof(u32));
-    packet_read(p, &o->oMoveAngleYaw, sizeof(u32));
-    packet_read(p, &o->oTimer, sizeof(u32));
-    packet_read(p, &o->activeFlags, sizeof(u16));
-    packet_read(p, &o->header.gfx.node.flags, sizeof(s16));
-    packet_read(p, &o->oIntangibleTimer, sizeof(s32));
+    struct PacketObjectStandardFields data = { 0 };
+    packet_read(p, &data, sizeof(data));
+#ifdef TARGET_WII_U
+    packet_object_swap_standard_fields(&data);
+#endif
+    memcpy(&o->oPosX, data.posAndMisc, sizeof(data.posAndMisc));
+    o->oAction = data.action;
+    o->oPrevAction = data.prevAction;
+    o->oSubAction = data.subAction;
+    o->oInteractStatus = data.interactStatus;
+    o->oHeldState = data.heldState;
+    o->oMoveAngleYaw = data.moveAngleYaw;
+    o->oTimer = data.timer;
+    o->activeFlags = data.activeFlags;
+    o->header.gfx.node.flags = data.nodeFlags;
+    o->oIntangibleTimer = data.intangibleTimer;
 }
 
 // ----- extra fields ----- //

@@ -415,15 +415,9 @@ int smlua_func_get_texture_info(lua_State* L) {
         return 0;
     }
 
-    // Pre-size hash part to avoid incremental rehash churn while setting fixed fields.
     lua_createtable(L, 0, 6);
 
-#ifdef TARGET_WII_U
-    // Wii U stability path: avoid userdata caching/metatable churn here.
-    lua_pushnil(L);
-#else
     smlua_push_pointer(L, LVT_TEXTURE_P, (void *) texInfo.texture, NULL);
-#endif
     lua_setfield(L, -2, "texture");
 
     lua_pushinteger(L, texInfo.width);

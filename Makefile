@@ -866,7 +866,7 @@ BACKEND_CFLAGS += $(foreach capi,$(CONTROLLER_API),-DCAPI_$(capi)=1)
 BACKEND_LDFLAG0S :=
 
 ifeq ($(TARGET_WII_U),1)
-  BACKEND_CFLAGS := -DTARGET_WII_U -D__WIIU__ -D__WUT__ -D_POSIX_THREADS=1 -D_POSIX_THREAD_PRIORITY_SCHEDULING=1 -D_POSIX_PRIORITY_SCHEDULING=1 -DLUA_32BITS=1 -DMA_NO_RUNTIME_LINKING=1 -DRAPI_GX2=1 -DWAPI_GX2=1 -DAAPI_SDL2=1 -DCAPI_WIIU=1 -DHAVE_SDL2=1
+  BACKEND_CFLAGS := -DTARGET_WII_U -D__WIIU__ -D__WUT__ -D_POSIX_THREADS=1 -D_POSIX_THREAD_PRIORITY_SCHEDULING=1 -D_POSIX_PRIORITY_SCHEDULING=1 -DLUA_INT_TYPE=LUA_INT_LONGLONG -DLUA_FLOAT_TYPE=LUA_FLOAT_DOUBLE -DMA_NO_RUNTIME_LINKING=1 -DRAPI_GX2=1 -DWAPI_GX2=1 -DAAPI_SDL2=1 -DCAPI_WIIU=1 -DHAVE_SDL2=1
   BACKEND_LDFLAGS :=
 endif
 
@@ -1756,7 +1756,7 @@ ifeq ($(TARGET_WII_U),1)
   # Global Wii U fast-math causes runtime corruption in luaH_resize/luaV_execute.
   # Keep Lua at low optimization for runtime stability on Cemu/hardware while
   # Co-op DX API coverage is still being brought up.
-  $(BUILD_DIR)/third_party/lua-5.3.6/src/%.o: CFLAGS += -fno-fast-math -O0 -DLUA_C89_NUMBERS
+  $(BUILD_DIR)/third_party/lua-5.3.6/src/%.o: CFLAGS += -fno-fast-math -O0
 
   # Collision code is extremely sensitive to FP/stack codegen on Wii U/Cemu.
   # Keep this translation unit on strict math to avoid fast-math assumptions and

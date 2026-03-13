@@ -36,6 +36,9 @@ void network_send_change_area(void) {
 
     if (gNetworkType == NT_SERVER) {
         player_changed_area(gNetworkPlayerLocal, gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex);
+        // Server-local area changes need an explicit location broadcast so
+        // remote peers update the host's tracked area immediately.
+        network_send_level_area_inform();
         return;
     }
 
