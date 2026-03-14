@@ -184,18 +184,6 @@ void packet_receive(struct Packet* p) {
         return;
     }
 
-    // If a peer has only a provisional local mapping (not fully joined yet),
-    // only allow the same pre-join packet set as unknown senders.
-    if (gNetworkType == NT_SERVER
-        && p->localIndex != UNKNOWN_LOCAL_INDEX
-        && p->localIndex != 0
-        && !gNetworkPlayers[p->localIndex].connected
-        && !network_allow_unknown_local_index(packetType)) {
-        LOG_INFO("refusing packet from unjoined mapped player localIndex=%u, packetType=%d",
-                 p->localIndex, packetType);
-        return;
-    }
-
     // check if we've already seen this packet
     if (p->localIndex != 0 && p->localIndex != UNKNOWN_LOCAL_INDEX && p->seqId != 0 && gNetworkPlayers[p->localIndex].connected) {
         u32 packetHash = packet_hash(p);

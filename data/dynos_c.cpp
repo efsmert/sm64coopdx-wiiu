@@ -314,6 +314,10 @@ u32 dynos_model_get_id_from_graph_node(struct GraphNode* aGraphNode) {
     return DynOS_Model_GetIdFromGraphNode(aGraphNode);
 }
 
+u32 dynos_model_get_id_from_actor_name(const char *actorName) {
+    return DynOS_Actor_GetModelIdFromName(actorName);
+}
+
 void dynos_model_clear_pool(enum ModelPool aModelPool) {
     DynOS_Model_ClearPool(aModelPool);
 }

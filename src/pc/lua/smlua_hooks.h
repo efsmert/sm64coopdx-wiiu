@@ -136,6 +136,7 @@ extern int gHookedModMenuElementsCount;
 #define smlua_call_event_hooks(hookEventType, ...) \
     smlua_call_event_hooks_##hookEventType(__VA_ARGS__)
 
+bool smlua_any_event_hooks(enum LuaHookedEventType hookType);
 int smlua_hook_custom_bhv(BehaviorScript *bhvScript, const char *bhvName);
 enum BehaviorId smlua_get_original_behavior_id(const BehaviorScript* behavior);
 const BehaviorScript* smlua_override_behavior(const BehaviorScript* behavior);

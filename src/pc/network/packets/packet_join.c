@@ -55,11 +55,11 @@ void network_send_join_request(void) {
     packet_init(&p, PACKET_JOIN_REQUEST, true, PLMT_NONE);
     char version[MAX_VERSION_LENGTH] = { 0 };
     snprintf(version, MAX_VERSION_LENGTH, "%s", get_version());
-    packet_write(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
+    packet_write_bytes(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
 
     packet_write(&p, &configPlayerModel,   sizeof(u8));
     packet_write(&p, &configPlayerPalette, sizeof(struct PlayerPalette));
-    packet_write(&p, &configPlayerName,    sizeof(u8) * MAX_CONFIG_STRING);
+    packet_write_bytes(&p, &configPlayerName, sizeof(u8) * MAX_CONFIG_STRING);
 
     network_send_to(network_get_server_local_index(), &p);
     LOG_INFO("sending join request");
@@ -82,10 +82,10 @@ void network_receive_join_request(struct Packet* p) {
 
     if (p->dataLength > 5) {
         char version[MAX_VERSION_LENGTH] = { 0 };
-        packet_read(p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
+        packet_read_bytes(p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
         packet_read(p, &sJoinRequestPlayerModel,   sizeof(u8));
         packet_read(p, &sJoinRequestPlayerPalette, sizeof(struct PlayerPalette));
-        packet_read(p, &sJoinRequestPlayerName,    sizeof(u8) * MAX_CONFIG_STRING);
+        packet_read_bytes(p, &sJoinRequestPlayerName, sizeof(u8) * MAX_CONFIG_STRING);
     } else {
         sJoinRequestPlayerModel = 0;
         sJoinRequestPlayerPalette = DEFAULT_MARIO_PALETTE;
@@ -132,7 +132,7 @@ void network_send_join(struct Packet* joinRequestPacket) {
 
     struct Packet p = { 0 };
     packet_init(&p, PACKET_JOIN, true, PLMT_NONE);
-    packet_write(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
+    packet_write_bytes(&p, &version, sizeof(u8) * MAX_VERSION_LENGTH);
     packet_write(&p, &globalIndex, sizeof(u8));
     packet_write(&p, &gCurrSaveFileNum, sizeof(s16));
     packet_write(&p, &gServerSettings.playerInteractions, sizeof(u8));
@@ -146,7 +146,7 @@ void network_send_join(struct Packet* joinRequestPacket) {
     packet_write(&p, &gServerSettings.maxPlayers, sizeof(u8));
     packet_write(&p, &gServerSettings.pauseAnywhere, sizeof(u8));
     packet_write(&p, &gServerSettings.pvpType, sizeof(u8));
-    packet_write(&p, eeprom, sizeof(u8) * 512);
+    packet_write_bytes(&p, eeprom, sizeof(u8) * 512);
 
     network_send_to(globalIndex, &p);
     LOG_INFO("sending join packet");
@@ -178,7 +178,7 @@ void network_receive_join(struct Packet* p) {
     }
 
     // verify version
-    packet_read(p, &remoteVersion, sizeof(u8) * MAX_VERSION_LENGTH);
+    packet_read_bytes(p, &remoteVersion, sizeof(u8) * MAX_VERSION_LENGTH);
     LOG_INFO("server has version: %s", version);
     if (memcmp(version, remoteVersion, MAX_VERSION_LENGTH) != 0) {
         network_shutdown(true, false, false, false);
@@ -202,7 +202,7 @@ void network_receive_join(struct Packet* p) {
     packet_read(p, &gServerSettings.maxPlayers, sizeof(u8));
     packet_read(p, &gServerSettings.pauseAnywhere, sizeof(u8));
     packet_read(p, &gServerSettings.pvpType, sizeof(u8));
-    packet_read(p, eeprom, sizeof(u8) * 512);
+    packet_read_bytes(p, eeprom, sizeof(u8) * 512);
 
     network_player_connected(NPT_SERVER, 0, 0, &DEFAULT_MARIO_PALETTE, "Player", "0");
     network_player_connected(NPT_LOCAL, myGlobalIndex, configPlayerModel, &configPlayerPalette, configPlayerName, get_local_discord_id());
@@ -227,13 +227,28 @@ void network_receive_join(struct Packet* p) {
     djui_panel_modlist_create(NULL);
     smlua_init();
 
+    JOIN_WIIU_LOG(
+        "packet_join: pre-request netType=%d serverLocal=%d localGlobal=%d currentLevel=%d/%d/%d/%d\n",
+        (int)gNetworkType,
+        (int)network_get_server_local_index(),
+        (gNetworkPlayerLocal != NULL) ? (int)gNetworkPlayerLocal->globalIndex : -1,
+        (int)gCurrCourseNum,
+        (int)gCurrActStarNum,
+        (int)gCurrLevelNum,
+        (int)gCurrAreaIndex);
+    network_send_network_players_request();
+    JOIN_WIIU_LOG("packet_join: sent network_players_request\n");
+    network_send_lua_sync_table_request();
+    JOIN_WIIU_LOG("packet_join: sent lua_sync_table_request\n");
+
     // Re-announce local cosmetics after join completes so the host can repair
     // any stale/default player metadata it created during the provisional join.
+    JOIN_WIIU_LOG("packet_join: sending player_settings\n");
     network_send_player_settings();
+    JOIN_WIIU_LOG("packet_join: player_settings sent\n");
+    JOIN_WIIU_LOG("packet_join: hooking custom behaviors\n");
     dynos_behavior_hook_all_custom_behaviors();
-
-    network_send_network_players_request();
-    network_send_lua_sync_table_request();
+    JOIN_WIIU_LOG("packet_join: custom behaviors hooked\n");
 
     gCurrentlyJoining = false;
     smlua_call_event_hooks(HOOK_JOINED_GAME);

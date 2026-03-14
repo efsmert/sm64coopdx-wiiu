@@ -89,6 +89,14 @@ struct MarioBodyState gBodyStates[MAX_PLAYERS];
 struct GraphNodeObject gMirrorMario[MAX_PLAYERS];  // copy of Mario's geo node for drawing mirror Mario
 struct PlayerColor gNetworkPlayerColors[MAX_PLAYERS];
 
+struct PlayerColorFrameCache {
+    u32 frame;
+    struct PlayerColor color;
+    Gfx *baseGfx;
+    Gfx *capGfx;
+};
+static struct PlayerColorFrameCache sPlayerColorFrameCache[MAX_PLAYERS];
+
 // This whole file is weirdly organized. It has to be the same file due
 // to rodata boundaries and function aligns, which means the programmer
 // treated this like a "misc" file for vaguely Mario related things
@@ -857,6 +865,18 @@ static Gfx *geo_mario_create_player_colors_dl(s32 index, Gfx *capEnemyGfx, Gfx *
     return gfx;
 }
 
+static struct PlayerColorFrameCache *geo_mario_refresh_player_color_cache(u8 index) {
+    struct PlayerColorFrameCache *cache = &sPlayerColorFrameCache[index];
+    if (cache->frame != (u32) gGlobalTimer) {
+        cache->frame = (u32) gGlobalTimer;
+        cache->color = geo_mario_get_player_color(&gNetworkPlayers[index].overridePalette);
+        cache->baseGfx = NULL;
+        cache->capGfx = NULL;
+    }
+    gNetworkPlayerColors[index] = cache->color;
+    return cache;
+}
+
 /**
  * Generate DL that sets player color depending on player number.
  */
@@ -864,15 +884,16 @@ Gfx* geo_mario_set_player_colors(s32 callContext, struct GraphNode* node, UNUSED
     struct GraphNodeGenerated* asGenerated = (struct GraphNodeGenerated*) node;
     Gfx* gfx = NULL;
     u8 index = geo_get_processing_object_index();
-
-    struct PlayerColor color = geo_mario_get_player_color(&gNetworkPlayers[index].overridePalette);
-    gNetworkPlayerColors[index] = color;
+    struct PlayerColorFrameCache *cache = geo_mario_refresh_player_color_cache(index);
 
     struct MarioBodyState* bodyState = &gBodyStates[index];
     bodyState->mirrorMario = gCurGraphNodeObject == &gMirrorMario[index];
 
     if (callContext == GEO_CONTEXT_RENDER) {
-        gfx = geo_mario_create_player_colors_dl(index, NULL, NULL);
+        if (cache->baseGfx == NULL) {
+            cache->baseGfx = geo_mario_create_player_colors_dl(index, NULL, NULL);
+        }
+        gfx = cache->baseGfx;
         u32 layer = LAYER_OPAQUE;
         if (asGenerated->parameter == 0) {
             // put on transparent layer if vanish effect, opaque otherwise
@@ -892,15 +913,16 @@ Gfx* geo_mario_set_player_colors(s32 callContext, struct GraphNode* node, UNUSED
 Gfx* geo_mario_cap_display_list(s32 callContext, struct GraphNode* node, UNUSED Mat4* c) {
     if (callContext != GEO_CONTEXT_RENDER) { return NULL; }
     u8 globalIndex = geo_get_processing_object_index();
-
-    struct PlayerColor color = geo_mario_get_player_color(&gNetworkPlayers[globalIndex].overridePalette);
-    gNetworkPlayerColors[globalIndex] = color;
+    struct PlayerColorFrameCache *cache = geo_mario_refresh_player_color_cache(globalIndex);
 
     u8 charIndex = gNetworkPlayers[globalIndex].overrideModelIndex;
     if (charIndex >= CT_MAX) { charIndex = 0; }
     struct Character* character = &gCharacters[charIndex];
 
-    Gfx *gfx = geo_mario_create_player_colors_dl(globalIndex, character->capEnemyGfx, character->capEnemyDecalGfx);
+    if (cache->capGfx == NULL) {
+        cache->capGfx = geo_mario_create_player_colors_dl(globalIndex, character->capEnemyGfx, character->capEnemyDecalGfx);
+    }
+    Gfx *gfx = cache->capGfx;
     struct GraphNodeGenerated* asGenerated = (struct GraphNodeGenerated*)node;
     asGenerated->fnNode.node.flags = (asGenerated->fnNode.node.flags & 0xFF) | (character->capEnemyLayer << 8);
     return gfx;

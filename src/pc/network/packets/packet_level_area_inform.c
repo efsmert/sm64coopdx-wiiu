@@ -9,7 +9,7 @@
 #include "game/mario_misc.h"
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
-#define LEVEL_AREA_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#define LEVEL_AREA_WIIU_LOG(...)
 #else
 #define LEVEL_AREA_WIIU_LOG(...)
 #endif

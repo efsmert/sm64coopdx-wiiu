@@ -13,7 +13,7 @@ void network_send_global_popup(const char* message, int lines) {
     packet_init(&p, PACKET_GLOBAL_POPUP, true, PLMT_NONE);
     packet_write(&p, &lines, sizeof(int));
     packet_write(&p, &messageLength, sizeof(u16));
-    packet_write(&p, (char*)message, messageLength * sizeof(u8));
+    packet_write_bytes(&p, (char*)message, messageLength * sizeof(u8));
     
     // send the packet
     network_send(&p);
@@ -29,7 +29,7 @@ void network_receive_global_popup(struct Packet* p) {
     packet_read(p, &lines, sizeof(int));
     packet_read(p, &messageLength, sizeof(u16));
     if (messageLength >= 255) { messageLength = 255; }
-    packet_read(p, message, messageLength * sizeof(u8));
+    packet_read_bytes(p, message, messageLength * sizeof(u8));
     // show popup
     djui_popup_create(message, lines);
 

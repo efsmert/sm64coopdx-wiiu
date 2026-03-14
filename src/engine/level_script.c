@@ -27,9 +27,6 @@
 #include "level_table.h"
 #include "data/dynos.c.h"
 #include "pc/lua/utils/smlua_model_utils.h"
-#ifdef TARGET_WII_U
-#include <coreinit/debug.h>
-#endif
 #include "pc/lua/smlua.h"
 #include "pc/djui/djui.h"
 #include "pc/debug_context.h"
@@ -68,33 +65,11 @@ static s16 sScriptStatus;
 static s32 sRegister;
 static struct LevelCommand *sCurrentCmd;
 
-#ifdef TARGET_WII_U
-static u32 sLevelHookedObjectLogCount = 0;
-static void level_wiiu_log_hooked_spawn(const char *label, struct SpawnInfo *spawnInfo, u32 extra) {
-    if (spawnInfo == NULL || spawnInfo->behaviorScript == NULL || sLevelHookedObjectLogCount >= 32) { return; }
-    if (!smlua_is_behavior_hooked((BehaviorScript *) spawnInfo->behaviorScript)) { return; }
-    const u32 behaviorId = get_id_from_behavior((const BehaviorScript *) spawnInfo->behaviorScript);
-    const char *behaviorName = smlua_get_name_from_hooked_behavior_id(behaviorId);
-
-    OSReport("arena-levelcmd: %s type=%02x pos=(%d,%d,%d) ang=(%d,%d,%d) beh=%08x extra=%08x sync=%u bhv=%u name=%s\n",
-             label ? label : "?",
-             (unsigned) sCurrentCmd->type,
-             (int) spawnInfo->startPos[0], (int) spawnInfo->startPos[1], (int) spawnInfo->startPos[2],
-             (int) spawnInfo->startAngle[0], (int) spawnInfo->startAngle[1], (int) spawnInfo->startAngle[2],
-             (unsigned) spawnInfo->behaviorArg,
-             (unsigned) extra,
-             (unsigned) spawnInfo->syncID,
-             (unsigned) behaviorId,
-             behaviorName ? behaviorName : "?");
-    sLevelHookedObjectLogCount++;
-}
-#else
 static void level_wiiu_log_hooked_spawn(const char *label, struct SpawnInfo *spawnInfo, u32 extra) {
     (void) label;
     (void) spawnInfo;
     (void) extra;
 }
-#endif
 
 static inline bool level_cmd_is_custom(void) {
     return gLevelScriptModIndex >= 0;

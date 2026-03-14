@@ -19,7 +19,7 @@
 #include "src/game/hardcoded.h"
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
-#define PACKET_PLAYER_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#define PACKET_PLAYER_WIIU_LOG(...)
 #else
 #define PACKET_PLAYER_WIIU_LOG(...)
 #endif
@@ -200,51 +200,9 @@ static void packet_player_data_swap_endian(struct PacketPlayerData* data) {
 }
 
 static void packet_player_log_wire_summary(const char* tag, u8 actorGlobalIndex, const u8* payload) {
-    const u32 animState = packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)));
-    const u32 opacity = packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)));
-    const u32 drawDistanceBits = packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x45 * sizeof(u32)));
-    const f32 rawPosX = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x06 * sizeof(u32))));
-    const f32 rawPosY = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x07 * sizeof(u32))));
-    const f32 rawPosZ = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x08 * sizeof(u32))));
-    const s32 rawFacePitch = (s32)packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x12 * sizeof(u32)));
-    const s32 rawFaceYaw = (s32)packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x13 * sizeof(u32)));
-    const s32 rawFaceRoll = (s32)packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, rawData) + (0x14 * sizeof(u32)));
-    const u16 nodeFlags = packet_player_load_u16_le(payload + offsetof(struct PacketPlayerData, nodeFlags));
-    const u32 action = packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, action));
-    const f32 posX = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, pos) + (0 * sizeof(f32))));
-    const f32 posY = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, pos) + (1 * sizeof(f32))));
-    const f32 posZ = packet_player_u32_as_f32(packet_player_load_u32_le(payload + offsetof(struct PacketPlayerData, pos) + (2 * sizeof(f32))));
-
-    PACKET_PLAYER_WIIU_LOG(
-        "packet_player: %s global=%u node=%04x action=%08x anim=%u opacity=%u drawDist=%.2f pos=(%.2f,%.2f,%.2f) rawPos=(%.2f,%.2f,%.2f) rawFace=(%d,%d,%d)\n",
-        tag,
-        (unsigned)actorGlobalIndex,
-        (unsigned)nodeFlags,
-        (unsigned)action,
-        (unsigned)animState,
-        (unsigned)opacity,
-        packet_player_u32_as_f32(drawDistanceBits),
-        posX, posY, posZ,
-        rawPosX, rawPosY, rawPosZ,
-        (int)rawFacePitch, (int)rawFaceYaw, (int)rawFaceRoll);
-
-    PACKET_PLAYER_WIIU_LOG(
-        "packet_player: %s bytes anim=%02x %02x %02x %02x opacity=%02x %02x %02x %02x node=%02x %02x action=%02x %02x %02x %02x\n",
-        tag,
-        payload[offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)) + 0],
-        payload[offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)) + 1],
-        payload[offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)) + 2],
-        payload[offsetof(struct PacketPlayerData, rawData) + (0x1A * sizeof(u32)) + 3],
-        payload[offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)) + 0],
-        payload[offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)) + 1],
-        payload[offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)) + 2],
-        payload[offsetof(struct PacketPlayerData, rawData) + (0x3D * sizeof(u32)) + 3],
-        payload[offsetof(struct PacketPlayerData, nodeFlags) + 0],
-        payload[offsetof(struct PacketPlayerData, nodeFlags) + 1],
-        payload[offsetof(struct PacketPlayerData, action) + 0],
-        payload[offsetof(struct PacketPlayerData, action) + 1],
-        payload[offsetof(struct PacketPlayerData, action) + 2],
-        payload[offsetof(struct PacketPlayerData, action) + 3]);
+    (void)tag;
+    (void)actorGlobalIndex;
+    (void)payload;
 }
 #endif
 
@@ -390,7 +348,6 @@ static void network_player_refresh_local_sync_state(void) {
     if (gNetworkPlayerLocal == NULL) { return; }
     if (gMarioStates[0].marioObj == NULL) { return; }
     if (gCurrentArea == NULL) { return; }
-
     extern s16 gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex;
 
     bool locationMatches = (gNetworkPlayerLocal->currCourseNum == gCurrCourseNum)
@@ -427,7 +384,6 @@ static void network_player_maybe_send_local_level_area_inform(void) {
     if (gNetworkPlayerLocal == NULL) { return; }
     if (gMarioStates[0].marioObj == NULL) { return; }
     if (gCurrentArea == NULL) { return; }
-
     extern s16 gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex;
 
     static s16 sLastInformCourseNum = -1;

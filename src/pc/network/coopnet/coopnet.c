@@ -64,105 +64,6 @@ static uint32_t sClientModListAttempts = 0;
 
 static CoopNetRc coopnet_initialize(void);
 
-#define COOPNET_RX_QUEUE_CAPACITY 4096
-struct CoopnetRxQueueItem {
-    uint64_t userId;
-    u8 localIndex;
-    u16 dataLength;
-    u8 data[PACKET_LENGTH + 1];
-};
-
-static struct CoopnetRxQueueItem* sCoopnetRxQueue = NULL;
-static volatile u32 sCoopnetRxHead = 0;
-static volatile u32 sCoopnetRxTail = 0;
-static volatile s32 sCoopnetRxLock = 0;
-
-static void coopnet_rx_lock(void) {
-    while (__sync_lock_test_and_set(&sCoopnetRxLock, 1)) { }
-}
-
-static void coopnet_rx_unlock(void) {
-    __sync_lock_release(&sCoopnetRxLock);
-}
-
-static bool coopnet_rx_queue_ensure_allocated(void) {
-    if (sCoopnetRxQueue != NULL) {
-        return true;
-    }
-
-    sCoopnetRxQueue = calloc(COOPNET_RX_QUEUE_CAPACITY, sizeof(struct CoopnetRxQueueItem));
-    if (sCoopnetRxQueue == NULL) {
-        LOG_ERROR("Failed to allocate CoopNet RX queue");
-        return false;
-    }
-
-    return true;
-}
-
-static void coopnet_rx_queue_clear(void) {
-    if (!coopnet_rx_queue_ensure_allocated()) {
-        return;
-    }
-    coopnet_rx_lock();
-    sCoopnetRxHead = 0;
-    sCoopnetRxTail = 0;
-    coopnet_rx_unlock();
-}
-
-static bool coopnet_rx_queue_push(uint64_t userId, u8 localIndex, const uint8_t* data, u16 dataLength) {
-    if (data == NULL || dataLength == 0 || dataLength > (PACKET_LENGTH + 1)) {
-        return false;
-    }
-    if (!coopnet_rx_queue_ensure_allocated()) {
-        return false;
-    }
-
-    bool pushed = false;
-    coopnet_rx_lock();
-    u32 head = sCoopnetRxHead;
-    u32 next = (head + 1) % COOPNET_RX_QUEUE_CAPACITY;
-    if (next != sCoopnetRxTail) {
-        struct CoopnetRxQueueItem* item = &sCoopnetRxQueue[head];
-        item->userId = userId;
-        item->localIndex = localIndex;
-        item->dataLength = dataLength;
-        memcpy(item->data, data, dataLength);
-        sCoopnetRxHead = next;
-        pushed = true;
-    }
-    coopnet_rx_unlock();
-
-    return pushed;
-}
-
-static bool coopnet_rx_queue_pop(struct CoopnetRxQueueItem* outItem) {
-    if (outItem == NULL) {
-        return false;
-    }
-    if (sCoopnetRxQueue == NULL) {
-        return false;
-    }
-
-    bool popped = false;
-    coopnet_rx_lock();
-    u32 tail = sCoopnetRxTail;
-    if (tail != sCoopnetRxHead) {
-        memcpy(outItem, &sCoopnetRxQueue[tail], sizeof(struct CoopnetRxQueueItem));
-        sCoopnetRxTail = (tail + 1) % COOPNET_RX_QUEUE_CAPACITY;
-        popped = true;
-    }
-    coopnet_rx_unlock();
-
-    return popped;
-}
-
-static void coopnet_process_rx_queue(void) {
-    struct CoopnetRxQueueItem item;
-    while (coopnet_rx_queue_pop(&item)) {
-        network_receive(item.localIndex, &item.userId, item.data, item.dataLength);
-    }
-}
-
 static uint64_t coopnet_generate_dest_id(void) {
     uint64_t seed = ((uint64_t)time(NULL) << 32) ^ (uint64_t)clock_elapsed_ticks();
     seed ^= (uint64_t)(uintptr_t)&seed;
@@ -264,7 +165,6 @@ static void coopnet_on_disconnected(bool intentional) {
     wiiu_coopnet_logf("coopnet: disconnected intentional=%d\n", intentional ? 1 : 0);
 #endif
     coopnet_clear_client_join_state();
-    coopnet_rx_queue_clear();
     if (!intentional) {
         djui_popup_create(DLANG(NOTIF, COOPNET_DISCONNECTED), 2);
     }
@@ -316,13 +216,6 @@ static void coopnet_on_receive(uint64_t userId, const uint8_t* data, uint64_t da
                           (unsigned)localIndex);
 #endif
     }
-#ifdef TARGET_WII_U
-    wiiu_coopnet_logf("coopnet: recv fromUser=%llu localIndex=%u hostUser=%llu bytes=%llu\n",
-                      (unsigned long long)userId,
-                      (unsigned)localIndex,
-                      (unsigned long long)coopnet_raw_get_id(0),
-                      (unsigned long long)dataLength);
-#endif
     if (dataLength > (uint64_t)(PACKET_LENGTH + 1)) {
 #ifdef TARGET_WII_U
         wiiu_coopnet_logf("coopnet: drop oversized recv userId=%llu bytes=%llu\n",
@@ -330,12 +223,7 @@ static void coopnet_on_receive(uint64_t userId, const uint8_t* data, uint64_t da
 #endif
         return;
     }
-    if (!coopnet_rx_queue_push(userId, localIndex, data, (u16)dataLength)) {
-#ifdef TARGET_WII_U
-        wiiu_coopnet_logf("coopnet: rx queue full/drop userId=%llu bytes=%llu\n",
-                          (unsigned long long)userId, (unsigned long long)dataLength);
-#endif
-    }
+    network_receive(localIndex, &userId, (u8*)data, dataLength);
 }
 
 static void coopnet_on_lobby_joined(uint64_t lobbyId, uint64_t userId, uint64_t ownerId, uint64_t destId) {
@@ -567,7 +455,6 @@ void ns_coopnet_update(void) {
     if (!coopnet_is_connected()) { return; }
 
     coopnet_update();
-    coopnet_process_rx_queue();
     if (gNetworkType == NT_CLIENT && sJoinPending && sJoinPendingStart > 0.0f) {
         float now = clock_elapsed();
         float elapsed = now - sJoinPendingStart;
@@ -727,19 +614,9 @@ static void ns_coopnet_shutdown(bool reconnecting) {
 
     sLocalLobbyId = 0;
     sLocalLobbyOwnerId = 0;
-
-    coopnet_rx_lock();
-    free(sCoopnetRxQueue);
-    sCoopnetRxQueue = NULL;
-    sCoopnetRxHead = 0;
-    sCoopnetRxTail = 0;
-    coopnet_rx_unlock();
 }
 
 static CoopNetRc coopnet_initialize(void) {
-    if (!coopnet_rx_queue_ensure_allocated()) {
-        return COOPNET_FAILED;
-    }
     gCoopNetCallbacks.OnConnected = coopnet_on_connected;
     gCoopNetCallbacks.OnDisconnected = coopnet_on_disconnected;
     gCoopNetCallbacks.OnReceive = coopnet_on_receive;

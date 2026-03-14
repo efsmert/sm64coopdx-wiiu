@@ -836,15 +836,25 @@ void create_next_audio_buffer(s16 *samples, u32 num_samples) {
  */
 extern f32 *smlua_get_vec3f_for_play_sound(f32 *pos);
 
+static bool audio_enqueue_sound_request(s32 soundBits, f32 *pos, f32 freqScale) {
+    u8 nextSoundRequestCount = (u8)(sSoundRequestCount + 1);
+    if (nextSoundRequestCount == sNumProcessedSoundRequests) {
+        return false;
+    }
+
+    sSoundRequests[sSoundRequestCount].soundBits = soundBits;
+    sSoundRequests[sSoundRequestCount].position = pos;
+    sSoundRequests[sSoundRequestCount].customFreqScale = freqScale;
+    sSoundRequestCount = nextSoundRequestCount;
+    return true;
+}
+
 void play_sound(s32 soundBits, f32 *pos) {
     MUTEX_LOCK(gAudioThread);
     
     pos = smlua_get_vec3f_for_play_sound(pos);
     smlua_call_event_hooks(HOOK_ON_PLAY_SOUND, soundBits, pos, &soundBits);
-    sSoundRequests[sSoundRequestCount].soundBits = soundBits;
-    sSoundRequests[sSoundRequestCount].position = pos;
-    sSoundRequests[sSoundRequestCount].customFreqScale = 0;
-    sSoundRequestCount++;
+    audio_enqueue_sound_request(soundBits, pos, 0);
     
     MUTEX_UNLOCK(gAudioThread);
 }
@@ -854,10 +864,7 @@ void play_sound_with_freq_scale(s32 soundBits, f32* pos, f32 freqScale) {
     
     pos = smlua_get_vec3f_for_play_sound(pos);
     smlua_call_event_hooks(HOOK_ON_PLAY_SOUND, soundBits, pos, &soundBits);
-    sSoundRequests[sSoundRequestCount].soundBits = soundBits;
-    sSoundRequests[sSoundRequestCount].position = pos;
-    sSoundRequests[sSoundRequestCount].customFreqScale = freqScale;
-    sSoundRequestCount++;
+    audio_enqueue_sound_request(soundBits, pos, freqScale);
     
     MUTEX_UNLOCK(gAudioThread);
 }

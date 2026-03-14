@@ -106,6 +106,11 @@ int smlua_hook_event(lua_State* L) {
     return 1;
 }
 
+bool smlua_any_event_hooks(enum LuaHookedEventType hookType) {
+    if (hookType >= HOOK_MAX) { return false; }
+    return sHookedEvents[hookType].count > 0;
+}
+
   ///////////////////
  // hooked events //
 ///////////////////

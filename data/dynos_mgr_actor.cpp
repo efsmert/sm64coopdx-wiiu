@@ -4,6 +4,7 @@
 #include "dynos.cpp.h"
 
 extern "C" {
+#include "model_ids.h"
 #include "object_fields.h"
 #include "game/level_update.h"
 #include "game/object_list_processor.h"
@@ -148,6 +149,27 @@ const void *DynOS_Actor_GetLayoutFromName(const char *aActorName) {
     }
 
     return NULL;
+}
+
+u32 DynOS_Actor_GetModelIdFromName(const char *aActorName) {
+    if (aActorName == NULL) {
+        return MODEL_ERROR_MODEL;
+    }
+
+    for (auto &pair : DynosValidActors()) {
+        ActorGfx &actorGfx = pair.second;
+        if (actorGfx.mGraphNode == NULL || actorGfx.mGfxData == NULL) {
+            continue;
+        }
+
+        for (auto &geo : actorGfx.mGfxData->mGeoLayouts) {
+            if (geo != NULL && !strcmp(aActorName, geo->mName.begin())) {
+                return DynOS_Model_GetIdFromGraphNode(actorGfx.mGraphNode);
+            }
+        }
+    }
+
+    return MODEL_ERROR_MODEL;
 }
 
 bool DynOS_Actor_GetModIndexAndToken(const GraphNode *aGraphNode, u32 aTokenIndex, s32 *outModIndex, s32 *outModFileIndex, const char **outToken) {

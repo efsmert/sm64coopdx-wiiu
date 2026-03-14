@@ -8,12 +8,17 @@
 #include "game/camera.h"
 #include "pc/lua/utils/smlua_misc_utils.h"
 #include "pc/lua/smlua_hooks.h"
+#include <string.h>
 
 #define FADE_SCALE 4.f
 
 struct StateExtras {
     Vec3f prevPos;
     f32 prevScale;
+    char cachedRawName[MAX_CONFIG_STRING];
+    char cachedName[MAX_CONFIG_STRING];
+    f32 cachedMeasure;
+    bool nameCached;
     bool inited;
 };
 static struct StateExtras sStateExtras[MAX_PLAYERS];
@@ -58,6 +63,18 @@ void nametags_render(void) {
 
     djui_hud_set_resolution(RESOLUTION_N64);
     djui_hud_set_font(FONT_SPECIAL);
+    bool hasNametagHooks = smlua_any_event_hooks(HOOK_ON_NAMETAGS_RENDER);
+
+    // The credits viewport does not change per player, so apply it once instead
+    // of bouncing the viewport and scissor state for every visible nametag.
+    extern Vp *gViewportOverride;
+    extern Vp *gViewportClip;
+    extern Vp gViewportFullscreen;
+    Vp *viewport = gViewportOverride == NULL ? gViewportClip : gViewportOverride;
+    if (viewport) {
+        make_viewport_clip_rect(viewport);
+        gSPViewport(gDisplayListHead++, viewport);
+    }
 
     for (u8 i = gNametagsSettings.showSelfTag ? 0 : 1; i < MAX_PLAYERS; i++) {
         struct MarioState* m = &gMarioStates[i];
@@ -89,41 +106,45 @@ void nametags_render(void) {
         if ((i != 0 || (i == 0 && m->action != ACT_FIRST_PERSON)) &&
             djui_hud_world_pos_to_screen_pos(pos, out)) {
 
-            char name[MAX_CONFIG_STRING];
-            const char* hookedString = NULL;
-            smlua_call_event_hooks(HOOK_ON_NAMETAGS_RENDER, i, pos, &hookedString);
-            if (hookedString) {
-                snprintf(name, MAX_CONFIG_STRING, "%s", hookedString);
-            } else {
-                snprintf(name, MAX_CONFIG_STRING, "%s", np->name);
-                name_without_hex(name);
+            struct StateExtras* e = &sStateExtras[i];
+            const char* name = NULL;
+            f32 measureBase = 0.0f;
+
+            if (hasNametagHooks) {
+                const char* hookedString = NULL;
+                char hookName[MAX_CONFIG_STRING];
+                smlua_call_event_hooks(HOOK_ON_NAMETAGS_RENDER, i, pos, &hookedString);
+                if (hookedString) {
+                    snprintf(hookName, MAX_CONFIG_STRING, "%s", hookedString);
+                    name = hookName;
+                }
             }
-            if (!djui_hud_world_pos_to_screen_pos(pos, out)) {
-                continue;
+
+            if (name == NULL) {
+                if (!e->nameCached || strncmp(e->cachedRawName, np->name, MAX_CONFIG_STRING) != 0) {
+                    snprintf(e->cachedRawName, MAX_CONFIG_STRING, "%s", np->name);
+                    snprintf(e->cachedName, MAX_CONFIG_STRING, "%s", np->name);
+                    name_without_hex(e->cachedName);
+                    e->cachedMeasure = djui_hud_measure_text(e->cachedName);
+                    e->nameCached = true;
+                }
+                name = e->cachedName;
+                measureBase = e->cachedMeasure;
+            } else {
+                measureBase = djui_hud_measure_text(name);
             }
             u8* color = network_get_player_text_color(m->playerIndex);
 
             f32 scale = -300 / out[2] * djui_hud_get_fov_coeff();
-            f32 measure = djui_hud_measure_text(name) * scale * 0.5f;
+            f32 measure = measureBase * scale * 0.5f;
             out[1] -= 16 * scale;
 
             u8 alpha = (i == 0 ? 255 : MIN(np->fadeOpacity << 3, 255)) * clamp(FADE_SCALE - scale, 0.f, 1.f);
 
-            struct StateExtras* e = &sStateExtras[i];
             if (!e->inited) {
                 vec3f_copy(e->prevPos, out);
                 e->prevScale = scale;
                 e->inited = true;
-            }
-
-            // Apply viewport for credits
-            extern Vp *gViewportOverride;
-            extern Vp *gViewportClip;
-            extern Vp gViewportFullscreen;
-            Vp *viewport = gViewportOverride == NULL ? gViewportClip : gViewportOverride;
-            if (viewport) {
-                make_viewport_clip_rect(viewport);
-                gSPViewport(gDisplayListHead++, viewport);
             }
 
             djui_hud_print_outlined_text_interpolated(name,
@@ -141,21 +162,21 @@ void nametags_render(void) {
                 );
             }
 
-            // Reset viewport
-            if (viewport) {
-                gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
-                gSPViewport(gDisplayListHead++, &gViewportFullscreen);
-            }
-
             vec3f_copy(e->prevPos, out);
             e->prevScale = scale;
         }
         gDjuiHudToWorldCalcViewport = true;
     }
+
+    if (viewport) {
+        gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, BORDER_HEIGHT, SCREEN_WIDTH, SCREEN_HEIGHT - BORDER_HEIGHT);
+        gSPViewport(gDisplayListHead++, &gViewportFullscreen);
+    }
 }
 
 void nametags_reset(void) {
     for (u8 i = 0; i < MAX_PLAYERS; i++) {
+        sStateExtras[i].nameCached = false;
         sStateExtras[i].inited = false;
     }
 }

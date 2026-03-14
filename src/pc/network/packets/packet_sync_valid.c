@@ -5,7 +5,7 @@
 #include "pc/debuglog.h"
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
-#define SYNC_VALID_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#define SYNC_VALID_WIIU_LOG(...)
 #else
 #define SYNC_VALID_WIIU_LOG(...)
 #endif

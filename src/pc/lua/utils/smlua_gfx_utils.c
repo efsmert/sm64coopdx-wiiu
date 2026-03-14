@@ -17,6 +17,14 @@ void set_override_near(f32 nearClip) {
 ///
 
 void set_override_far(f32 farClip) {
+#ifdef TARGET_WII_U
+    // DynOS/vanilla geo frustums are authored with s16 far values, typically well below
+    // 32767. Huge overrides like 200000 work on desktop backends but blow up depth
+    // precision on GX2, causing the world to disappear behind camera-centered sky spheres.
+    if (farClip > 32767.0f) {
+        farClip = 32767.0f;
+    }
+#endif
     gOverrideFar = farClip;
 }
 

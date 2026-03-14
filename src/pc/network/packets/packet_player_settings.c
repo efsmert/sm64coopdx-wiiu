@@ -17,9 +17,9 @@ void network_send_player_settings(void) {
     struct Packet p = { 0 };
     packet_init(&p, PACKET_PLAYER_SETTINGS, true, PLMT_NONE);
     packet_write(&p, &gNetworkPlayers[0].globalIndex, sizeof(u8));
-    packet_write(&p, playerName, MAX_CONFIG_STRING * sizeof(u8));
+    packet_write_bytes(&p, playerName, MAX_CONFIG_STRING * sizeof(u8));
     packet_write(&p, &configPlayerModel, sizeof(u8));
-    packet_write(&p, &configPlayerPalette, sizeof(struct PlayerPalette));
+    packet_write_bytes(&p, &configPlayerPalette, sizeof(struct PlayerPalette));
 
     if (gNetworkPlayerLocal != NULL) {
         if (snprintf(gNetworkPlayerLocal->name, MAX_CONFIG_STRING, "%s", playerName) < 0) {
@@ -47,9 +47,9 @@ void network_receive_player_settings(struct Packet* p) {
     struct PlayerPalette playerPalette;
 
     packet_read(p, &globalId, sizeof(u8));
-    packet_read(p, &playerName, MAX_CONFIG_STRING * sizeof(u8));
+    packet_read_bytes(p, &playerName, MAX_CONFIG_STRING * sizeof(u8));
     packet_read(p, &playerModel, sizeof(u8));
-    packet_read(p, &playerPalette, sizeof(struct PlayerPalette));
+    packet_read_bytes(p, &playerPalette, sizeof(struct PlayerPalette));
 
     if (globalId == gNetworkPlayers[0].globalIndex || globalId > MAX_PLAYERS) {
         LOG_ERROR("Received player settings from improper player.");

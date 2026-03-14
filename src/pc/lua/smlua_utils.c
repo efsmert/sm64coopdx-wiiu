@@ -345,7 +345,7 @@ bool packet_write_lnt(struct Packet* p, struct LSTNetworkType* lnt) {
                 return false;
             }
             packet_write(p, &valueLength, sizeof(u16));
-            packet_write(p, lnt->value.string, valueLength * sizeof(u8));
+            packet_write_bytes(p, lnt->value.string, valueLength * sizeof(u8));
             return true;
         }
 
@@ -386,7 +386,7 @@ bool packet_read_lnt(struct Packet* p, struct LSTNetworkType* lnt) {
                 return false;
             }
             lnt->value.string = calloc(valueLength + 1, sizeof(char));
-            packet_read(p, lnt->value.string, valueLength * sizeof(u8));
+            packet_read_bytes(p, lnt->value.string, valueLength * sizeof(u8));
             return true;
         }
 

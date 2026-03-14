@@ -8,6 +8,7 @@
 #include "pc/network/moderator_list.h"
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
+#include "pc/network/coopnet/coopnet_id.h"
 #define NETWORK_PLAYERS_WIIU_LOG(...) OSReport(__VA_ARGS__)
 #else
 #define NETWORK_PLAYERS_WIIU_LOG(...)
@@ -39,9 +40,9 @@ static void network_send_to_network_players(u8 sendToLocalIndex) {
         packet_write(&p, &gNetworkPlayers[i].currAreaSyncValid,  sizeof(u8));
         packet_write(&p, &networkId,                             sizeof(s64));
         packet_write(&p, &gNetworkPlayers[i].modelIndex,         sizeof(u8));
-        packet_write(&p, &gNetworkPlayers[i].palette,            sizeof(struct PlayerPalette));
-        packet_write(&p, &gNetworkPlayers[i].name,               sizeof(u8) * MAX_CONFIG_STRING);
-        packet_write(&p, &gNetworkPlayers[i].discordId,          sizeof(u8) * 64);
+        packet_write_bytes(&p, &gNetworkPlayers[i].palette,      sizeof(struct PlayerPalette));
+        packet_write_bytes(&p, &gNetworkPlayers[i].name,         sizeof(u8) * MAX_CONFIG_STRING);
+        packet_write_bytes(&p, &gNetworkPlayers[i].discordId,    sizeof(u8) * 64);
         LOG_INFO("send network player [%d == %d]", gNetworkPlayers[i].globalIndex, npType);
 #ifdef TARGET_WII_U
         NETWORK_PLAYERS_WIIU_LOG(
@@ -70,6 +71,11 @@ void network_send_network_players_request(void) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
     struct Packet p = { 0 };
     packet_init(&p, PACKET_NETWORK_PLAYERS_REQUEST, true, PLMT_NONE);
+    NETWORK_PLAYERS_WIIU_LOG(
+        "network_players: tx request serverLocal=%u serverGlobal=%d hostUserId=%llu\n",
+        (unsigned)network_get_server_local_index(),
+        (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->globalIndex : -1,
+        (unsigned long long)coopnet_raw_get_id(network_get_server_local_index()));
     network_send_to(network_get_server_local_index(), &p);
     LOG_INFO("sending network players request");
 }
@@ -79,8 +85,14 @@ void network_receive_network_players_request(struct Packet* p) {
     u8 localIndex = p->localIndex;
     if (localIndex == UNKNOWN_LOCAL_INDEX) {
         LOG_ERROR("Received network players request from unknown index");
+        NETWORK_PLAYERS_WIIU_LOG("network_players: rx request unknown\n");
         return;
     }
+    NETWORK_PLAYERS_WIIU_LOG(
+        "network_players: rx request local=%u global=%d connected=%d\n",
+        (unsigned)localIndex,
+        (int)gNetworkPlayers[localIndex].globalIndex,
+        gNetworkPlayers[localIndex].connected ? 1 : 0);
     network_send_to_network_players(localIndex);
 
     if (moderator_list_contains(gNetworkSystem->get_id_str(p->localIndex))) {
@@ -133,9 +145,9 @@ void network_receive_network_players(struct Packet *p) {
         packet_read(p, &areaSyncValid,  sizeof(u8));
         packet_read(p, &networkId,      sizeof(s64));
         packet_read(p, &modelIndex,     sizeof(u8));
-        packet_read(p, &palette,        sizeof(struct PlayerPalette));
-        packet_read(p, &playerName,     sizeof(u8) * MAX_CONFIG_STRING);
-        packet_read(p, &discordId,      sizeof(u8) * 64);
+        packet_read_bytes(p, &palette,    sizeof(struct PlayerPalette));
+        packet_read_bytes(p, &playerName, sizeof(u8) * MAX_CONFIG_STRING);
+        packet_read_bytes(p, &discordId,  sizeof(u8) * 64);
 
         if (globalIndex >= MAX_PLAYERS) { continue; }
 

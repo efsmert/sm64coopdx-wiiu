@@ -39,7 +39,7 @@
 #include "engine/lighting_engine.h"
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
-#define NET_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#define NET_WIIU_LOG(...)
 #else
 #define NET_WIIU_LOG(...)
 #endif

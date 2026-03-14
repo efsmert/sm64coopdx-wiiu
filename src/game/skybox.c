@@ -11,8 +11,11 @@
 #include "sm64.h"
 #include "hud.h"
 #include "geo_commands.h"
+#include "object_fields.h"
+#include "object_list_processor.h"
 #include "hardcoded.h"
 #include "skybox.h"
+#include "data/dynos.c.h"
 
 /**
  * @file skybox.c
@@ -78,6 +81,26 @@ extern SkyboxTexture clouds_skybox_ptrlist;
 extern SkyboxTexture ssl_skybox_ptrlist;
 extern SkyboxTexture water_skybox_ptrlist;
 extern SkyboxTexture wdw_skybox_ptrlist;
+#ifdef TARGET_WII_U
+extern SkyboxTexture dnc_ccm_night_skybox_ptrlist;
+extern SkyboxTexture dnc_ccm_sunrise_skybox_ptrlist;
+extern SkyboxTexture dnc_ccm_sunset_skybox_ptrlist;
+extern SkyboxTexture dnc_cloud_floor_night_skybox_ptrlist;
+extern SkyboxTexture dnc_cloud_floor_sunrise_skybox_ptrlist;
+extern SkyboxTexture dnc_cloud_floor_sunset_skybox_ptrlist;
+extern SkyboxTexture dnc_clouds_night_skybox_ptrlist;
+extern SkyboxTexture dnc_clouds_sunrise_skybox_ptrlist;
+extern SkyboxTexture dnc_clouds_sunset_skybox_ptrlist;
+extern SkyboxTexture dnc_ssl_night_skybox_ptrlist;
+extern SkyboxTexture dnc_ssl_sunrise_skybox_ptrlist;
+extern SkyboxTexture dnc_ssl_sunset_skybox_ptrlist;
+extern SkyboxTexture dnc_water_night_skybox_ptrlist;
+extern SkyboxTexture dnc_water_sunrise_skybox_ptrlist;
+extern SkyboxTexture dnc_water_sunset_skybox_ptrlist;
+extern SkyboxTexture dnc_wdw_night_skybox_ptrlist;
+extern SkyboxTexture dnc_wdw_sunrise_skybox_ptrlist;
+extern SkyboxTexture dnc_wdw_sunset_skybox_ptrlist;
+#endif
 Texture* gCustomSkyboxPtrList[80] = { NULL };
 
 SkyboxTexture *sSkyboxTextures[10] = {
@@ -92,6 +115,111 @@ SkyboxTexture *sSkyboxTextures[10] = {
     &clouds_skybox_ptrlist,
     &bits_skybox_ptrlist,
 };
+
+#ifdef TARGET_WII_U
+enum WiiUDncSkyboxBackgrounds {
+    WIIU_DNC_BACKGROUND_OCEAN_SKY_NIGHT = 10,
+    WIIU_DNC_BACKGROUND_OCEAN_SKY_SUNRISE,
+    WIIU_DNC_BACKGROUND_OCEAN_SKY_SUNSET,
+    WIIU_DNC_BACKGROUND_UNDERWATER_CITY_NIGHT,
+    WIIU_DNC_BACKGROUND_UNDERWATER_CITY_SUNRISE,
+    WIIU_DNC_BACKGROUND_UNDERWATER_CITY_SUNSET,
+    WIIU_DNC_BACKGROUND_BELOW_CLOUDS_NIGHT,
+    WIIU_DNC_BACKGROUND_BELOW_CLOUDS_SUNRISE,
+    WIIU_DNC_BACKGROUND_BELOW_CLOUDS_SUNSET,
+    WIIU_DNC_BACKGROUND_SNOW_MOUNTAINS_NIGHT,
+    WIIU_DNC_BACKGROUND_SNOW_MOUNTAINS_SUNRISE,
+    WIIU_DNC_BACKGROUND_SNOW_MOUNTAINS_SUNSET,
+    WIIU_DNC_BACKGROUND_DESERT_NIGHT,
+    WIIU_DNC_BACKGROUND_DESERT_SUNRISE,
+    WIIU_DNC_BACKGROUND_DESERT_SUNSET,
+    WIIU_DNC_BACKGROUND_ABOVE_CLOUDS_NIGHT,
+    WIIU_DNC_BACKGROUND_ABOVE_CLOUDS_SUNRISE,
+    WIIU_DNC_BACKGROUND_ABOVE_CLOUDS_SUNSET,
+};
+
+static SkyboxTexture *skybox_wiiu_get_daynight_ptrlist(s32 animState) {
+    switch (animState) {
+        case WIIU_DNC_BACKGROUND_OCEAN_SKY_NIGHT:         return &dnc_water_night_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_OCEAN_SKY_SUNRISE:       return &dnc_water_sunrise_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_OCEAN_SKY_SUNSET:        return &dnc_water_sunset_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_UNDERWATER_CITY_NIGHT:   return &dnc_wdw_night_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_UNDERWATER_CITY_SUNRISE: return &dnc_wdw_sunrise_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_UNDERWATER_CITY_SUNSET:  return &dnc_wdw_sunset_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_BELOW_CLOUDS_NIGHT:      return &dnc_cloud_floor_night_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_BELOW_CLOUDS_SUNRISE:    return &dnc_cloud_floor_sunrise_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_BELOW_CLOUDS_SUNSET:     return &dnc_cloud_floor_sunset_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_SNOW_MOUNTAINS_NIGHT:    return &dnc_ccm_night_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_SNOW_MOUNTAINS_SUNRISE:  return &dnc_ccm_sunrise_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_SNOW_MOUNTAINS_SUNSET:   return &dnc_ccm_sunset_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_DESERT_NIGHT:            return &dnc_ssl_night_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_DESERT_SUNRISE:          return &dnc_ssl_sunrise_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_DESERT_SUNSET:           return &dnc_ssl_sunset_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_ABOVE_CLOUDS_NIGHT:      return &dnc_clouds_night_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_ABOVE_CLOUDS_SUNRISE:    return &dnc_clouds_sunrise_skybox_ptrlist;
+        case WIIU_DNC_BACKGROUND_ABOVE_CLOUDS_SUNSET:     return &dnc_clouds_sunset_skybox_ptrlist;
+    }
+    return NULL;
+}
+
+static void skybox_wiiu_copy_custom_ptrlist(SkyboxTexture *ptrlist) {
+    s32 i;
+    for (i = 0; i < 80; i++) {
+        gCustomSkyboxPtrList[i] = (Texture *) (*ptrlist)[i];
+    }
+}
+
+static bool skybox_wiiu_is_daynight_object(struct Object *obj, u32 modelId) {
+    return obj != NULL
+        && obj->header.gfx.sharedChild != NULL
+        && dynos_model_get_id_from_graph_node(obj->header.gfx.sharedChild) == modelId;
+}
+
+static bool skybox_wiiu_apply_daynight_override(s8 *background) {
+    u32 modelId = dynos_model_get_id_from_actor_name("dnc_skybox_geo");
+    struct Object *bestObject = NULL;
+    s32 bestOpacity = -1;
+    s32 list;
+
+    if (background == NULL || modelId == MODEL_ERROR_MODEL || gObjectLists == NULL) {
+        return false;
+    }
+
+    for (list = 0; list < NUM_OBJ_LISTS; list++) {
+        struct Object *head = (struct Object *) &gObjectLists[list];
+        struct Object *obj = (struct Object *) head->header.next;
+        while (obj != head) {
+            if (obj->activeFlags && skybox_wiiu_is_daynight_object(obj, modelId)) {
+                obj->header.gfx.node.flags |= GRAPH_RENDER_INVISIBLE;
+
+                if (obj->header.gfx.areaIndex == gCurrAreaIndex && obj->oOpacity >= bestOpacity) {
+                    bestObject = obj;
+                    bestOpacity = obj->oOpacity;
+                }
+            }
+            obj = (struct Object *) obj->header.next;
+        }
+    }
+
+    if (bestObject == NULL) {
+        return false;
+    }
+
+    if (bestObject->oAnimState < BACKGROUND_CUSTOM) {
+        *background = (s8) bestObject->oAnimState;
+        return true;
+    }
+
+    SkyboxTexture *ptrlist = skybox_wiiu_get_daynight_ptrlist(bestObject->oAnimState);
+    if (ptrlist == NULL) {
+        return false;
+    }
+
+    skybox_wiiu_copy_custom_ptrlist(ptrlist);
+    *background = BACKGROUND_CUSTOM;
+    return true;
+}
+#endif
 
 /**
  * The skybox color mask.
@@ -349,6 +477,10 @@ Gfx *create_skybox_facing_camera(s8 player, s8 background, f32 fov,
 
     gReadOnlyBackground = background;
     background = gOverrideBackground == -1 ? background : gOverrideBackground;
+
+#ifdef TARGET_WII_U
+    skybox_wiiu_apply_daynight_override(&background);
+#endif
 
     f32 cameraFaceX = focX - posX;
     f32 cameraFaceY = focY - posY;

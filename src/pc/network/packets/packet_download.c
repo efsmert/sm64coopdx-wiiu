@@ -393,7 +393,7 @@ after_filled:;
     packet_init(&p, PACKET_DOWNLOAD, true, PLMT_NONE);
     packet_write(&p, &requestOffset, sizeof(u64));
     packet_write(&p, &chunkFill,    sizeof(u64));
-    packet_write(&p, &chunk,        sizeof(u8) * chunkFill);
+    packet_write_bytes(&p, &chunk,  sizeof(u8) * chunkFill);
     network_send_to(sDownloadReplyLocalIndex, &p);
 
     //LOG_INFO("Sent chunk: offset %llu, length %llu", requestOffset, chunkFill);
@@ -458,7 +458,7 @@ void network_receive_download(struct Packet* p) {
         LOG_ERROR("Received improper chunk length");
         return;
     }
-    packet_read(p, &chunk,         sizeof(u8) * chunkLength);
+    packet_read_bytes(p, &chunk,    sizeof(u8) * chunkLength);
 
     // mark the offset group as received
     bool foundGroup = false;

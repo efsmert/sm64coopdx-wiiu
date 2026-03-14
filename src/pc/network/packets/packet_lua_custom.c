@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "../network.h"
 #include "pc/mods/mod.h"
+#include "pc/mods/mods.h"
 #include "pc/lua/smlua.h"
 #include "pc/lua/smlua_utils.h"
 #include "pc/debuglog.h"
@@ -19,6 +21,45 @@ static void network_lua_custom_log_malformed(const char* stage) {
     sMalformedCount++;
     if (sMalformedCount <= 4 || (sMalformedCount % 128) == 0) {
         LOG_ERROR("Dropped malformed lua custom packet (%s), count=%u", stage, sMalformedCount);
+    }
+}
+
+static bool network_lua_trace_is_flood_mod(u16 modIndex, const char** outModName) {
+    *outModName = "<invalid>";
+    if (modIndex >= gActiveMods.entryCount) { return false; }
+    struct Mod* mod = gActiveMods.entries[modIndex];
+    if (mod == NULL) { return false; }
+
+    if (mod->name != NULL && mod->name[0] != '\0') {
+        *outModName = mod->name;
+    } else if (mod->relativePath[0] != '\0') {
+        *outModName = mod->relativePath;
+    }
+
+    return (mod->name != NULL && strstr(mod->name, "Flood") != NULL) ||
+           (strstr(mod->relativePath, "flood") != NULL);
+}
+
+static void network_lua_trace_format_lnt(const struct LSTNetworkType* lnt, char* buffer, size_t bufferSize) {
+    switch (lnt->type) {
+        case LST_NETWORK_TYPE_INTEGER:
+            snprintf(buffer, bufferSize, "%lld", lnt->value.integer);
+            break;
+        case LST_NETWORK_TYPE_NUMBER:
+            snprintf(buffer, bufferSize, "%.3f", lnt->value.number);
+            break;
+        case LST_NETWORK_TYPE_BOOLEAN:
+            snprintf(buffer, bufferSize, "%s", lnt->value.boolean ? "true" : "false");
+            break;
+        case LST_NETWORK_TYPE_STRING:
+            snprintf(buffer, bufferSize, "\"%.48s\"", lnt->value.string == NULL ? "<null>" : lnt->value.string);
+            break;
+        case LST_NETWORK_TYPE_NIL:
+            snprintf(buffer, bufferSize, "nil");
+            break;
+        default:
+            snprintf(buffer, bufferSize, "<type=%d>", lnt->type);
+            break;
     }
 }
 
@@ -118,6 +159,8 @@ void network_receive_lua_custom(struct Packet* p) {
     u8  keyCount = 0;
     packet_read(p, &modIndex, sizeof(u16));
     packet_read(p, &keyCount, sizeof(u8));
+    const char* modName = NULL;
+    bool traceFlood = network_lua_trace_is_flood_mod(modIndex, &modName);
 
     if (!L) {
         LOG_ERROR("Received lua custom packet when lua is dead");
@@ -142,6 +185,14 @@ void network_receive_lua_custom(struct Packet* p) {
             goto cleanup;
         }
 
+        if (traceFlood) {
+            char keyBuf[80] = { 0 };
+            char valueBuf[80] = { 0 };
+            network_lua_trace_format_lnt(&lntKey, keyBuf, sizeof(keyBuf));
+            network_lua_trace_format_lnt(&lntValue, valueBuf, sizeof(valueBuf));
+            LOG_INFO("flood-trace: custom rx mod=%u(%s) pair[%u]=%s -> %s", modIndex, modName, i, keyBuf, valueBuf);
+        }
+
         smlua_push_lnt(&lntKey);
         smlua_push_lnt(&lntValue);
 
@@ -155,6 +206,9 @@ void network_receive_lua_custom(struct Packet* p) {
         goto cleanup;
     }
 
+    if (traceFlood) {
+        LOG_INFO("flood-trace: custom dispatch mod=%u(%s) local=%u keys=%u", modIndex, modName, p->localIndex, keyCount);
+    }
     smlua_call_event_hooks(HOOK_ON_PACKET_RECEIVE, modIndex, tableIndex);
 cleanup:
     lua_pop(L, 1); // pop table
@@ -229,7 +283,7 @@ void network_send_lua_custom_bytestring(bool broadcast) {
     packet_write(&p, &bytestringLength, sizeof(u16));
 
     // write bytestring
-    packet_write(&p, (char*)bytestring, totalLength);
+    packet_write_bytes(&p, (char*)bytestring, totalLength);
 
     // send packet
     if (broadcast) {
@@ -245,6 +299,8 @@ void network_receive_lua_custom_bytestring(struct Packet* p) {
     u16 bytestringLength = 0;
     packet_read(p, &modIndex, sizeof(u16));
     packet_read(p, &bytestringLength, sizeof(u16));
+    const char* modName = NULL;
+    bool traceFlood = network_lua_trace_is_flood_mod(modIndex, &modName);
 
     if (!L) {
         LOG_ERROR("Received lua custom bytestring packet when lua is dead");
@@ -258,7 +314,7 @@ void network_receive_lua_custom_bytestring(struct Packet* p) {
 
     // read byte string
     static char sBytestring[MAX_BYTESTRING_LENGTH + 1] = "";
-    packet_read(p, &sBytestring, bytestringLength);
+    packet_read_bytes(p, &sBytestring, bytestringLength);
 
     if (p->error) {
         LOG_ERROR("Received malformed lua custom bytestring packet");
@@ -270,6 +326,9 @@ void network_receive_lua_custom_bytestring(struct Packet* p) {
     s32 bytestringIndex = lua_gettop(L);
 
     // call hook
+    if (traceFlood) {
+        LOG_INFO("flood-trace: bytestring dispatch mod=%u(%s) local=%u len=%u", modIndex, modName, p->localIndex, bytestringLength);
+    }
     smlua_call_event_hooks(HOOK_ON_PACKET_BYTESTRING_RECEIVE, modIndex, bytestringIndex);
     lua_pop(L, 1); // pop bytestring
 }

@@ -72,7 +72,7 @@ void network_send_chat(char* message, u8 globalIndex) {
     packet_init(&p, PACKET_CHAT, true, PLMT_NONE);
     packet_write(&p, &globalIndex, sizeof(u8));
     packet_write(&p, &messageLength, sizeof(u16));
-    packet_write(&p, message, messageLength * sizeof(u8));
+    packet_write_bytes(&p, message, messageLength * sizeof(u8));
     network_send(&p);
 }
 
@@ -84,7 +84,7 @@ void network_receive_chat(struct Packet* p) {
     packet_read(p, &globalIndex, sizeof(u8));
     packet_read(p, &remoteMessageLength, sizeof(u16));
     if (remoteMessageLength >= MAX_CHAT_MSG_LENGTH - 1) { remoteMessageLength = MAX_CHAT_MSG_LENGTH - 1; }
-    packet_read(p, &remoteMessage, remoteMessageLength * sizeof(u8));
+    packet_read_bytes(p, &remoteMessage, remoteMessageLength * sizeof(u8));
 
     // anti spoof
     if (packet_spoofed(p, globalIndex)) {

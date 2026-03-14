@@ -604,9 +604,9 @@ else
   CPP_FILES         := $(filter-out src/pc/gfx/gfx_gx2.cpp src/pc/gfx/gfx_gx2_window.cpp,$(CPP_FILES))
 endif
 
-#ifeq ($(TARGET_N64),0)
-#  GENERATED_C_FILES += $(addprefix $(BUILD_DIR)/bin/,$(addsuffix _skybox.c,$(notdir $(basename $(wildcard textures/skyboxes/*.png)))))
-#endif
+ifeq ($(TARGET_N64),0)
+  GENERATED_C_FILES += $(addprefix $(BUILD_DIR)/bin/,$(addsuffix _skybox.c,$(notdir $(basename $(wildcard textures/skyboxes/*.png)))))
+endif
 
 # "If we're N64, use the above"
 ifeq ($(TARGET_N64),0)
