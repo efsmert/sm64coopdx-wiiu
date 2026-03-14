@@ -3,7 +3,7 @@
 #include "pc/debuglog.h"
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
-#define PLAYER_SETTINGS_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#define PLAYER_SETTINGS_WIIU_LOG(...)
 #else
 #define PLAYER_SETTINGS_WIIU_LOG(...)
 #endif

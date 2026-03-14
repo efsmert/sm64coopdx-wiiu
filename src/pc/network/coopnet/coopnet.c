@@ -17,14 +17,8 @@
 #include "pc/wiiu_network.h"
 #include <stdarg.h>
 #include <stdio.h>
-#define COOPNET_WIIU_LOG_BUFSZ 512
 static void wiiu_coopnet_logf(const char* fmt, ...) {
-    char buffer[COOPNET_WIIU_LOG_BUFSZ];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    OSReport("%s", buffer);
+    (void)fmt;
 }
 #endif
 #ifdef DISCORD_SDK
@@ -100,17 +94,6 @@ static void coopnet_try_send_mod_list_request(uint64_t lobbyId, const char* reas
         return;
     }
 
-    u8 hostLocalIndex = coopnet_user_id_to_local_index(hostUserId);
-    if (hostLocalIndex == UNKNOWN_LOCAL_INDEX) {
-#ifdef TARGET_WII_U
-        wiiu_coopnet_logf("coopnet: modlist deferred lobbyId=%llu reason=%s hostUserId=%llu localIndex=unknown\n",
-                          (unsigned long long)lobbyId,
-                          reason ? reason : "unknown",
-                          (unsigned long long)hostUserId);
-#endif
-        return;
-    }
-
     if (sClientModListRequested && sClientModListLobbyId == lobbyId) {
         if (sClientModListAttempts >= COOPNET_MODLIST_MAX_ATTEMPTS) {
             return;
@@ -134,11 +117,10 @@ static void coopnet_try_send_mod_list_request(uint64_t lobbyId, const char* reas
         sJoinPendingLastProgressLog = sJoinPendingStart - 2.0f;
     }
 #ifdef TARGET_WII_U
-    wiiu_coopnet_logf("coopnet: modlist request lobbyId=%llu reason=%s hostUserId=%llu hostLocal=%u attempt=%u\n",
+    wiiu_coopnet_logf("coopnet: modlist request lobbyId=%llu reason=%s hostUserId=%llu attempt=%u\n",
                       (unsigned long long)lobbyId,
                       reason ? reason : "unknown",
                       (unsigned long long)hostUserId,
-                      (unsigned)hostLocalIndex,
                       (unsigned)sClientModListAttempts);
 #endif
 }
@@ -204,6 +186,7 @@ static void coopnet_on_load_balance(const char* host, uint32_t port) {
 }
 
 static void coopnet_on_receive(uint64_t userId, const uint8_t* data, uint64_t dataLength) {
+    u8 packetType = (dataLength > 0) ? data[0] : 0xFF;
     // Keep slot 0 aligned with the latest active sender, matching upstream
     // CoopDX semantics for "server" routing during pre-join handshakes.
     coopnet_set_user_id(0, userId);
@@ -222,6 +205,21 @@ static void coopnet_on_receive(uint64_t userId, const uint8_t* data, uint64_t da
                           (unsigned long long)userId, (unsigned long long)dataLength);
 #endif
         return;
+    }
+    if (packetType == PACKET_NETWORK_PLAYERS
+        || packetType == PACKET_NETWORK_PLAYERS_REQUEST
+        || packetType == PACKET_LUA_SYNC_TABLE_REQUEST
+        || packetType == PACKET_LUA_SYNC_TABLE
+        || packetType == PACKET_LUA_CUSTOM
+        || packetType == PACKET_LUA_CUSTOM_BYTESTRING) {
+        LOG_INFO("coopnet-trace: rx packet=%u userId=%llu localIndex=%u slot0=%llu slot1=%llu slot2=%llu netType=%d",
+                 (unsigned)packetType,
+                 (unsigned long long)userId,
+                 (unsigned)localIndex,
+                 (unsigned long long)coopnet_raw_get_id(0),
+                 (unsigned long long)coopnet_raw_get_id(1),
+                 (unsigned long long)coopnet_raw_get_id(2),
+                 (int)gNetworkType);
     }
     network_receive(localIndex, &userId, (u8*)data, dataLength);
 }

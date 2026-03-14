@@ -58,8 +58,19 @@ u8 coopnet_user_id_to_local_index(uint64_t userId) {
     if (userId == 0) { return UNKNOWN_LOCAL_INDEX; }
 
     for (int i = 1; i < MAX_PLAYERS; i++) {
-        if (sNetworkUserIds[i] == userId) {
+        if (gNetworkPlayers[i].connected && sNetworkUserIds[i] == userId) {
             return i;
+        }
+    }
+    return UNKNOWN_LOCAL_INDEX;
+}
+
+static u8 coopnet_user_id_to_reserved_local_index(uint64_t userId) {
+    if (userId == 0) { return UNKNOWN_LOCAL_INDEX; }
+
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        if (sNetworkUserIds[i] == userId) {
+            return (u8)i;
         }
     }
     return UNKNOWN_LOCAL_INDEX;
@@ -68,7 +79,7 @@ u8 coopnet_user_id_to_local_index(uint64_t userId) {
 u8 coopnet_reserve_user_id(uint64_t userId) {
     if (userId == 0) { return UNKNOWN_LOCAL_INDEX; }
 
-    u8 localIndex = coopnet_user_id_to_local_index(userId);
+    u8 localIndex = coopnet_user_id_to_reserved_local_index(userId);
     if (localIndex != UNKNOWN_LOCAL_INDEX) {
         return localIndex;
     }

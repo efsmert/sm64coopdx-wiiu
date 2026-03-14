@@ -10,8 +10,10 @@
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
 #define LEVEL_AREA_WIIU_LOG(...)
+#define LEVEL_AREA_VERBOSE_LOG(...)
 #else
 #define LEVEL_AREA_WIIU_LOG(...)
+#define LEVEL_AREA_VERBOSE_LOG LOG_INFO
 #endif
 
 void network_send_level_area_inform(void) {
@@ -42,7 +44,7 @@ void network_send_level_area_inform(void) {
         (unsigned)np->currLevelSyncValid,
         (unsigned)np->currAreaSyncValid);
 
-    LOG_INFO("tx level area inform for global %d: (%d, %d, %d, %d)", np->globalIndex, np->currCourseNum, np->currActNum, np->currLevelNum, np->currAreaIndex);
+    LEVEL_AREA_VERBOSE_LOG("tx level area inform for global %d: (%d, %d, %d, %d)", np->globalIndex, np->currCourseNum, np->currActNum, np->currLevelNum, np->currAreaIndex);
 }
 
 void network_receive_level_area_inform(struct Packet* p) {
@@ -59,7 +61,7 @@ void network_receive_level_area_inform(struct Packet* p) {
     packet_read(p, &levelSyncValid, sizeof(u8));
     packet_read(p, &areaSyncValid,  sizeof(u8));
 
-    LOG_INFO("rx level area inform for global %d: (%d, %d, %d, %d)", globalIndex, courseNum, actNum, levelNum, areaIndex);
+    LEVEL_AREA_VERBOSE_LOG("rx level area inform for global %d: (%d, %d, %d, %d)", globalIndex, courseNum, actNum, levelNum, areaIndex);
 
     struct NetworkPlayer *np = network_player_from_global_index(globalIndex);
     if (np == NULL || np->localIndex == UNKNOWN_LOCAL_INDEX || !np->connected) {
@@ -70,7 +72,7 @@ void network_receive_level_area_inform(struct Packet* p) {
     if (np == gNetworkPlayerLocal) { return; }
 
     if (np->currLevelAreaSeqId >= seq && abs(np->currLevelAreaSeqId - seq) < 256) {
-        LOG_INFO("Received old level area inform seq: %d vs %d", np->currLevelAreaSeqId, seq);
+        LEVEL_AREA_VERBOSE_LOG("Received old level area inform seq: %d vs %d", np->currLevelAreaSeqId, seq);
         return;
     }
 

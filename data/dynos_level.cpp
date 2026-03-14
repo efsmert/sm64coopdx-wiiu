@@ -552,35 +552,6 @@ s16 *DynOS_Level_GetWarp(s32 aLevel, s32 aArea, s8 aWarpId) {
                 DynOS_Level_ParseScript(cachedScript, DynOS_Level_PreprocessScript);
             }
             sDynosSwapCmdScalarFields = prevSwap;
-#ifdef TARGET_WII_U
-            static u32 sCustomWarpParseLogCount = 0;
-            if (sCustomWarpParseLogCount < 64) {
-                u32 w0 = 0, w1 = 0, w2 = 0, w3 = 0, w4 = 0, w5 = 0, w6 = 0, w7 = 0, w8 = 0, w9 = 0;
-                if (scriptToParse != NULL) {
-                    u32 *words = (u32 *) scriptToParse;
-                    w0 = words[0];
-                    w1 = words[1];
-                    w2 = words[2];
-                    w3 = words[3];
-                    w4 = words[4];
-                    w5 = words[5];
-                    w6 = words[6];
-                    w7 = words[7];
-                    w8 = words[8];
-                    w9 = words[9];
-                }
-                WHBLogPrintf("dynos: custom warp parse level=%d slot=%d entry='%s' script=%p cached=%p warps=%d",
-                             (int) aLevel, (int) sDynosCurrentLevelNum,
-                             info->scriptEntryName != NULL ? info->scriptEntryName : "(null)",
-                             scriptToParse, cachedScript,
-                             (int) sDynosLevelWarps[sDynosCurrentLevelNum].Count());
-                WHBLogPrintf("dynos: custom warp script words script=%p w0=%08x w1=%08x w2=%08x w3=%08x w4=%08x w5=%08x w6=%08x w7=%08x w8=%08x w9=%08x",
-                             scriptToParse,
-                             (unsigned) w0, (unsigned) w1, (unsigned) w2, (unsigned) w3, (unsigned) w4,
-                             (unsigned) w5, (unsigned) w6, (unsigned) w7, (unsigned) w8, (unsigned) w9);
-                sCustomWarpParseLogCount++;
-            }
-#endif
         }
 
         // find the custom level warp
@@ -622,16 +593,6 @@ s16 *DynOS_Level_GetWarpEntry(s32 aLevel, s32 aArea) {
         if (warpNode && marioPos) {
             const bool warpNodeLooksUnsafe = (warpNode[4] <= -10000);
             if (warpNodeLooksUnsafe) {
-#ifdef TARGET_WII_U
-                static u32 sCustomEntryPreferMarioPosLogCount = 0;
-                if (sCustomEntryPreferMarioPosLogCount < 64) {
-                    WHBLogPrintf("dynos: custom entry prefer mario_pos level=%d area=%d warp0A(y=%d type=%d) marioPos(y=%d type=%d)",
-                                 (int)aLevel, (int)aArea,
-                                 (int)warpNode[4], (int)warpNode[2],
-                                 (int)marioPos[4], (int)marioPos[2]);
-                    sCustomEntryPreferMarioPosLogCount++;
-                }
-#endif
                 return marioPos;
             }
         }
@@ -659,17 +620,6 @@ s16 *DynOS_Level_GetWarpEntry(s32 aLevel, s32 aArea) {
         if (sDynosLevelWarps[sDynosCurrentLevelNum].Count() > 0) {
             return (s16 *) &sDynosLevelWarps[sDynosCurrentLevelNum][0];
         }
-#ifdef TARGET_WII_U
-        static u32 sCustomWarpMissLogCount = 0;
-        if (sCustomWarpMissLogCount < 32) {
-            struct CustomLevelInfo* info = smlua_level_util_get_info(aLevel);
-            WHBLogPrintf("dynos: custom warp miss level=%d area=%d slot=%d info=%p script=%p warps=%d",
-                         (int) aLevel, (int) aArea, (int) sDynosCurrentLevelNum, info,
-                         info != NULL ? info->script : NULL,
-                         (int) sDynosLevelWarps[sDynosCurrentLevelNum].Count());
-            sCustomWarpMissLogCount++;
-        }
-#endif
         return NULL;
     }
 

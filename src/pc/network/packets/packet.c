@@ -3,6 +3,12 @@
 #include "../network.h"
 #include "pc/network/ban_list.h"
 #include "pc/debuglog.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define PACKET_WIIU_TRACE(...)
+#else
+#define PACKET_WIIU_TRACE(...)
+#endif
 
 static u32 sCompBufferLen = 0;
 static Bytef* sCompBuffer = NULL;
@@ -53,6 +59,16 @@ void packet_process(struct Packet* p) {
              || p->areaIndex != gCurrAreaIndex);
         // drop packet
         if (levelAreaMismatch) {
+            if (p->packetType == PACKET_LUA_SYNC_TABLE
+                || p->packetType == PACKET_LUA_CUSTOM
+                || p->packetType == PACKET_LUA_CUSTOM_BYTESTRING
+                || p->packetType == PACKET_NETWORK_PLAYERS) {
+                PACKET_WIIU_TRACE("packet-drop: levelarea packet=%u local=%u packet=(%d,%d,%d,%d) curr=(%d,%d,%d,%d)\n",
+                                  (unsigned)p->packetType,
+                                  (unsigned)p->localIndex,
+                                  (int)p->courseNum, (int)p->actNum, (int)p->levelNum, (int)p->areaIndex,
+                                  (int)gCurrCourseNum, (int)gCurrActStarNum, (int)gCurrLevelNum, (int)gCurrAreaIndex);
+            }
             if (gNetworkType != NT_SERVER) {
                 LOG_INFO("dropping level mismatch packet %d", p->packetType);
                 LOG_INFO("    (%d, %d, %d, %d) != (%d, %d, %d, %d)", p->courseNum, p->actNum, p->levelNum, p->areaIndex, gCurrCourseNum, gCurrActStarNum, gCurrLevelNum, gCurrAreaIndex);
@@ -67,6 +83,16 @@ void packet_process(struct Packet* p) {
                 || p->levelNum != gCurrLevelNum);
         // drop packet
         if (levelMismatch) {
+            if (p->packetType == PACKET_LUA_SYNC_TABLE
+                || p->packetType == PACKET_LUA_CUSTOM
+                || p->packetType == PACKET_LUA_CUSTOM_BYTESTRING
+                || p->packetType == PACKET_NETWORK_PLAYERS) {
+                PACKET_WIIU_TRACE("packet-drop: level packet=%u local=%u packet=(%d,%d,%d) curr=(%d,%d,%d)\n",
+                                  (unsigned)p->packetType,
+                                  (unsigned)p->localIndex,
+                                  (int)p->courseNum, (int)p->actNum, (int)p->levelNum,
+                                  (int)gCurrCourseNum, (int)gCurrActStarNum, (int)gCurrLevelNum);
+            }
             if (gNetworkType != NT_SERVER) {
                 LOG_INFO("dropping level mismatch packet %d", p->packetType);
                 LOG_INFO("    (%d, %d, %d) != (%d, %d, %d)", p->courseNum, p->actNum, p->levelNum, gCurrCourseNum, gCurrActStarNum, gCurrLevelNum);
@@ -148,6 +174,18 @@ void packet_process(struct Packet* p) {
 void packet_receive(struct Packet* p) {
     u8 packetType = (u8)p->buffer[0];
 
+    if (packetType == PACKET_NETWORK_PLAYERS
+        || packetType == PACKET_NETWORK_PLAYERS_REQUEST
+        || packetType == PACKET_LUA_SYNC_TABLE_REQUEST
+        || packetType == PACKET_LUA_SYNC_TABLE
+        || packetType == PACKET_LUA_CUSTOM
+        || packetType == PACKET_LUA_CUSTOM_BYTESTRING) {
+        PACKET_WIIU_TRACE("packet-recv: begin packet=%u local=%u netType=%d\n",
+                          (unsigned)packetType,
+                          (unsigned)p->localIndex,
+                          (int)gNetworkType);
+    }
+
     // send an ACK if requested
     network_send_ack(p);
 
@@ -172,6 +210,15 @@ void packet_receive(struct Packet* p) {
 
     // refuse packets from unknown players other than join request
     if (gNetworkType == NT_SERVER && p->localIndex == UNKNOWN_LOCAL_INDEX && !network_allow_unknown_local_index(packetType)) {
+        if (packetType == PACKET_NETWORK_PLAYERS_REQUEST
+            || packetType == PACKET_LUA_SYNC_TABLE_REQUEST
+            || packetType == PACKET_LUA_SYNC_TABLE
+            || packetType == PACKET_LUA_CUSTOM
+            || packetType == PACKET_LUA_CUSTOM_BYTESTRING) {
+            PACKET_WIIU_TRACE("packet-drop: unknown-local packet=%u startup=%u\n",
+                              (unsigned)packetType,
+                              (unsigned)gNetworkStartupTimer);
+        }
         if (gNetworkStartupTimer > 0) {
             LOG_INFO("refusing packet from unknown player on startup, packetType: %d", packetType);
             return;
@@ -203,6 +250,19 @@ void packet_receive(struct Packet* p) {
 
     // parse the packet without processing the rest
     if (packet_initial_read(p)) {
+        if (packetType == PACKET_NETWORK_PLAYERS
+            || packetType == PACKET_NETWORK_PLAYERS_REQUEST
+            || packetType == PACKET_LUA_SYNC_TABLE_REQUEST
+            || packetType == PACKET_LUA_SYNC_TABLE
+            || packetType == PACKET_LUA_CUSTOM
+            || packetType == PACKET_LUA_CUSTOM_BYTESTRING) {
+            PACKET_WIIU_TRACE("packet-recv: parsed packet=%u local=%u dest=%u ordered=%u level=(%d,%d,%d,%d)\n",
+                              (unsigned)packetType,
+                              (unsigned)p->localIndex,
+                              (unsigned)p->destGlobalId,
+                              (unsigned)p->orderedGroupId,
+                              (int)p->courseNum, (int)p->actNum, (int)p->levelNum, (int)p->areaIndex);
+        }
         if (gNetworkType == NT_SERVER && p->destGlobalId != PACKET_DESTINATION_BROADCAST && p->destGlobalId != 0 && packetType != PACKET_ACK && packetType != PACKET_MOD_LIST_REQUEST) {
             // this packet is meant for someone else
             struct Packet p2 = { 0 };

@@ -13,17 +13,13 @@
 #include <coreinit/debug.h>
 #include <stdarg.h>
 #include <stdio.h>
-#define MODLIST_WIIU_LOG_BUFSZ 256
 static void modlist_wiiu_logf(const char* fmt, ...) {
-    char buffer[MODLIST_WIIU_LOG_BUFSZ];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    OSReport("%s", buffer);
+    (void)fmt;
 }
+#define MODLIST_VERBOSE_LOG(...)
 #else
 static void modlist_wiiu_logf(UNUSED const char* fmt, ...) { }
+#define MODLIST_VERBOSE_LOG LOG_INFO
 #endif
 
 static u8 sModListReplyLocalIndex = 0;
@@ -133,7 +129,7 @@ void network_send_mod_list(void) {
     packet_write(&p, &gActiveMods.entryCount, sizeof(u16));
     network_send_to(sModListReplyLocalIndex, &p);
 
-    LOG_INFO("sent mod list (%u):", gActiveMods.entryCount);
+    MODLIST_VERBOSE_LOG("sent mod list (%u):", gActiveMods.entryCount);
     for (u16 i = 0; i < gActiveMods.entryCount; i++) {
         struct Mod* mod = gActiveMods.entries[i];
 
@@ -168,7 +164,7 @@ void network_send_mod_list(void) {
         packet_write(&p, &mod->ignoreScriptWarnings, sizeof(u8));
         packet_write(&p, &mod->fileCount, sizeof(u16));
         network_send_to(sModListReplyLocalIndex, &p);
-        LOG_INFO("    '%s': %llu", mod->name, (u64)mod->size);
+        MODLIST_VERBOSE_LOG("    '%s': %llu", mod->name, (u64)mod->size);
 
         for (u16 j = 0; j < mod->fileCount; j++) {
             struct Packet p = { 0 };
@@ -183,7 +179,7 @@ void network_send_mod_list(void) {
             packet_write(&p, &fileSize, sizeof(u64));
             packet_write_bytes(&p, &file->dataHash[0], sizeof(u8) * 16);
             network_send_to(sModListReplyLocalIndex, &p);
-            LOG_INFO("      '%s': %llu", file->relativePath, (u64)file->size);
+            MODLIST_VERBOSE_LOG("      '%s': %llu", file->relativePath, (u64)file->size);
         }
     }
 
@@ -240,7 +236,7 @@ void network_receive_mod_list(struct Packet* p) {
     }
 
     modlist_wiiu_logf("coopnet-modlist: recv header entries=%u\n", gRemoteMods.entryCount);
-    LOG_INFO("received mod list (%u):", gRemoteMods.entryCount);
+    MODLIST_VERBOSE_LOG("received mod list (%u):", gRemoteMods.entryCount);
 }
 
 void network_receive_mod_list_entry(struct Packet* p) {
@@ -322,7 +318,7 @@ void network_receive_mod_list_entry(struct Packet* p) {
     packet_read(p, &mod->pausable, sizeof(u8));
     packet_read(p, &mod->ignoreScriptWarnings, sizeof(u8));
     normalize_path(mod->relativePath);
-    LOG_INFO("    '%s': %llu", mod->name, (u64)mod->size);
+    MODLIST_VERBOSE_LOG("    '%s': %llu", mod->name, (u64)mod->size);
 
     // figure out base path
     if (mod->isDirectory) {
@@ -420,7 +416,7 @@ void network_receive_mod_list_file(struct Packet* p) {
     file->size = (size_t)remoteFileSize;
     packet_read_bytes(p, &file->dataHash, sizeof(u8) * 16);
     file->fp = NULL;
-    LOG_INFO("      '%s': %llu", file->relativePath, (u64)file->size);
+        MODLIST_VERBOSE_LOG("      '%s': %llu", file->relativePath, (u64)file->size);
 
     if (modlist_is_arena_mod(mod)) {
         modlist_wiiu_logf("coopnet-modlist: arena file[%u]='%s' size=%llu hash=%02x%02x%02x%02x\n",
@@ -435,7 +431,7 @@ void network_receive_mod_list_file(struct Packet* p) {
 
     struct ModCacheEntry* cache = mod_cache_get_from_hash(file->dataHash);
     if (cache != NULL) {
-        LOG_INFO("Found file in cache: %s -> %s", file->relativePath, cache->path);
+        MODLIST_VERBOSE_LOG("Found file in cache: %s -> %s", file->relativePath, cache->path);
         if (file->cachedPath != NULL) {
             free((char*)file->cachedPath);
         }

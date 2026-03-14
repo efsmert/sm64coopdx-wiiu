@@ -21,7 +21,6 @@
 #include "pc/configfile.h"
 #include "pc/utils/misc.h"
 #include "pc/lua/utils/smlua_model_utils.h"
-
 #include "../mods/mods.h"
 #include "game/print.h"
 #include "gfx_dimensions.h"

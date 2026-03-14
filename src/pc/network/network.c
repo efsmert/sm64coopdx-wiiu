@@ -40,8 +40,10 @@
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
 #define NET_WIIU_LOG(...)
+#define NET_WIIU_TRACE(...)
 #else
 #define NET_WIIU_LOG(...)
+#define NET_WIIU_TRACE(...)
 #endif
 
 #ifdef DISCORD_SDK
@@ -527,6 +529,22 @@ void network_receive(u8 localIndex, void* addr, u8* data, u16 dataLength) {
                      (unsigned)localIndex, (unsigned)p.buffer[0], (unsigned)p.dataLength);
         LOG_ERROR("invalid packet hash!");
         return;
+    }
+
+    if (gNetworkSystem == &gNetworkSystemCoopNet) {
+        u8 pt = p.buffer[0];
+        if (pt == PACKET_NETWORK_PLAYERS
+            || pt == PACKET_NETWORK_PLAYERS_REQUEST
+            || pt == PACKET_LUA_SYNC_TABLE_REQUEST
+            || pt == PACKET_LUA_SYNC_TABLE
+            || pt == PACKET_LUA_CUSTOM
+            || pt == PACKET_LUA_CUSTOM_BYTESTRING) {
+            NET_WIIU_TRACE("postrx-trace: local=%u packet=%u decomp=%u addr0=%llu\n",
+                           (unsigned)localIndex,
+                           (unsigned)pt,
+                           (unsigned)p.dataLength,
+                           (unsigned long long)((addr != NULL) ? (*(u64*)addr) : 0));
+        }
     }
 
     if (gNetworkSystem == &gNetworkSystemCoopNet) {

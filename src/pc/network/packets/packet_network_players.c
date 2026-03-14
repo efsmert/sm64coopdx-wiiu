@@ -9,9 +9,11 @@
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
 #include "pc/network/coopnet/coopnet_id.h"
-#define NETWORK_PLAYERS_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#define NETWORK_PLAYERS_WIIU_LOG(...)
+#define NETWORK_PLAYERS_TRACE(...) OSReport(__VA_ARGS__)
 #else
 #define NETWORK_PLAYERS_WIIU_LOG(...)
+#define NETWORK_PLAYERS_TRACE(...)
 #endif
 
 static void network_send_to_network_players(u8 sendToLocalIndex) {
@@ -71,12 +73,17 @@ void network_send_network_players_request(void) {
     SOFT_ASSERT(gNetworkType == NT_CLIENT);
     struct Packet p = { 0 };
     packet_init(&p, PACKET_NETWORK_PLAYERS_REQUEST, true, PLMT_NONE);
+    u8 serverLocalIndex = (gNetworkPlayerServer != NULL) ? gNetworkPlayerServer->localIndex : 0;
+    NETWORK_PLAYERS_TRACE("join-trace: network_players_request serverLocal=%u hostSlot0=%llu hostSlot1=%llu\n",
+                          (unsigned)serverLocalIndex,
+                          (unsigned long long)coopnet_raw_get_id(0),
+                          (unsigned long long)coopnet_raw_get_id(1));
     NETWORK_PLAYERS_WIIU_LOG(
         "network_players: tx request serverLocal=%u serverGlobal=%d hostUserId=%llu\n",
-        (unsigned)network_get_server_local_index(),
+        (unsigned)serverLocalIndex,
         (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->globalIndex : -1,
-        (unsigned long long)coopnet_raw_get_id(network_get_server_local_index()));
-    network_send_to(network_get_server_local_index(), &p);
+        (unsigned long long)coopnet_raw_get_id(serverLocalIndex));
+    network_send_to(serverLocalIndex, &p);
     LOG_INFO("sending network players request");
 }
 

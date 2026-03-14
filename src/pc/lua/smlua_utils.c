@@ -363,7 +363,9 @@ bool packet_write_lnt(struct Packet* p, struct LSTNetworkType* lnt) {
 }
 
 bool packet_read_lnt(struct Packet* p, struct LSTNetworkType* lnt) {
-    packet_read(p, &lnt->type, sizeof(u8));
+    u8 lntType = 0;
+    packet_read(p, &lntType, sizeof(u8));
+    lnt->type = lntType;
 
     switch (lnt->type) {
         case LST_NETWORK_TYPE_NUMBER:

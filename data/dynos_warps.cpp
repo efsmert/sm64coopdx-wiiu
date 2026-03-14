@@ -23,16 +23,7 @@ extern void set_mario_initial_action(struct MarioState *, u32, u32);
 #include <coreinit/debug.h>
 static u32 sDynosWarpWiiULogBudget = 48;
 static void dynos_wiiu_warp_log(const char *fmt, ...) {
-    if (fmt == NULL || sDynosWarpWiiULogBudget == 0) {
-        return;
-    }
-    sDynosWarpWiiULogBudget--;
-    char buffer[256];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    OSReport("%s", buffer);
+    (void)fmt;
 }
 #else
 static void dynos_wiiu_warp_log(const char *fmt, ...) { (void) fmt; }

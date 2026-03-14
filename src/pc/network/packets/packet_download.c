@@ -15,17 +15,13 @@
 #include <coreinit/debug.h>
 #include <stdarg.h>
 #include <stdio.h>
-#define DOWNLOAD_WIIU_LOG_BUFSZ 256
 static void download_wiiu_logf(const char* fmt, ...) {
-    char buffer[DOWNLOAD_WIIU_LOG_BUFSZ];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    OSReport("%s", buffer);
+    (void)fmt;
 }
+#define DOWNLOAD_VERBOSE_LOG(...)
 #else
 static void download_wiiu_logf(UNUSED const char* fmt, ...) { }
+#define DOWNLOAD_VERBOSE_LOG LOG_INFO
 #endif
 
 #define CHUNK_SIZE 800
@@ -120,7 +116,7 @@ static void mark_groups_loaded_from_hash(void) {
             if (file->cachedPath != NULL) {
                 // if we loaded from cache, mark bytes as downloaded
                 sTotalDownloadBytes += file->size;
-                LOG_INFO("Loaded from cache: %s, %llu", file->cachedPath, (u64)file->size);
+                DOWNLOAD_VERBOSE_LOG("Loaded from cache: %s, %llu", file->cachedPath, (u64)file->size);
             } else {
                 if (file->size == 0) {
                     fileStartOffset += file->size;
@@ -132,7 +128,7 @@ static void mark_groups_loaded_from_hash(void) {
                 u64 ogIndexEnd = fileEndOffset / GROUP_SIZE;
                 do {
                     if (ogIndexStart < sOffsetGroupCount) {
-                        LOG_INFO("Marking group as required: %llu (%s)", ogIndexStart, file->relativePath);
+                        DOWNLOAD_VERBOSE_LOG("Marking group as required: %llu (%s)", ogIndexStart, file->relativePath);
                         offsetGroupRequired[ogIndexStart] = 1;
                     }
                     ogIndexStart++;
@@ -183,7 +179,7 @@ static bool network_start_offset_group(struct OffsetGroup* og) {
 
     // sanity check
     if (!foundIndex) {
-        LOG_INFO("Could not find offset group, may be near the end of the download");
+        DOWNLOAD_VERBOSE_LOG("Could not find offset group, may be near the end of the download");
         return false;
     }
 
@@ -223,7 +219,7 @@ static void network_update_offset_groups(void) {
         if (groupProgress[i] >= OFFSET_COUNT) {
             u64 groupIndex = (og->offset[0] / GROUP_SIZE);
             if (!sOffsetGroupsCompleted[groupIndex]) {
-                LOG_INFO("Completed group: %llu [ %llu <---> %llu ]", groupIndex, og->offset[0], og->offset[0] + GROUP_SIZE);
+                DOWNLOAD_VERBOSE_LOG("Completed group: %llu [ %llu <---> %llu ]", groupIndex, og->offset[0], og->offset[0] + GROUP_SIZE);
                 sOffsetGroupsCompleted[groupIndex] = true;
             }
         }
@@ -233,7 +229,7 @@ static void network_update_offset_groups(void) {
     bool completedDownload = true;
     for (u64 i = 0; i < sOffsetGroupCount; i++) {
         if (!sOffsetGroupsCompleted[i]) {
-            LOG_INFO("Not completed: %llu", i);
+            DOWNLOAD_VERBOSE_LOG("Not completed: %llu", i);
             completedDownload = false;
             break;
         }
@@ -294,7 +290,7 @@ void network_send_download_request(u64 offset) {
 
     network_send_to(network_get_server_local_index(), &p);
 
-    LOG_INFO("Requesting group: %llu [ %llu <---> %llu ]", (offset / GROUP_SIZE), offset, offset + GROUP_SIZE);
+    DOWNLOAD_VERBOSE_LOG("Requesting group: %llu [ %llu <---> %llu ]", (offset / GROUP_SIZE), offset, offset + GROUP_SIZE);
 }
 
 void network_receive_download_request(struct Packet* p) {
@@ -324,7 +320,7 @@ void network_receive_download_request(struct Packet* p) {
         network_send_download(sendOffset);
     }
 
-    LOG_INFO("Sending group: %llu [ %llu <---> %llu ]", (requestOffset / GROUP_SIZE), requestOffset, requestOffset + GROUP_SIZE);
+    DOWNLOAD_VERBOSE_LOG("Sending group: %llu [ %llu <---> %llu ]", (requestOffset / GROUP_SIZE), requestOffset, requestOffset + GROUP_SIZE);
 }
 
 void network_send_download(u64 requestOffset) {
@@ -433,7 +429,7 @@ static void open_mod_file(struct Mod* mod, struct ModFile* file) {
         LOG_ERROR("unable to open for write: '%s' - '%s'", fullPath, strerror(errno));
         return;
     }
-    LOG_INFO("Opened mod file pointer: %s", fullPath);
+    DOWNLOAD_VERBOSE_LOG("Opened mod file pointer: %s", fullPath);
 }
 
 void network_receive_download(struct Packet* p) {
@@ -470,7 +466,7 @@ void network_receive_download(struct Packet* p) {
                 continue;
             }
             if (og->rx[j]) {
-                LOG_INFO("Received duplicate chunk: %llu", receiveOffset);
+                DOWNLOAD_VERBOSE_LOG("Received duplicate chunk: %llu", receiveOffset);
                 return;
             }
             og->rx[j] = true;
@@ -481,7 +477,7 @@ void network_receive_download(struct Packet* p) {
 after_group:;
 
     if (!foundGroup) {
-        LOG_INFO("Received chunk from an inactive offset group");
+        DOWNLOAD_VERBOSE_LOG("Received chunk from an inactive offset group");
         return;
     }
 
@@ -560,7 +556,7 @@ after_group:;
     }
 after_poured:;
 
-    LOG_INFO("Received chunk: offset %llu, size %llu", receiveOffset, chunkLength);
+    DOWNLOAD_VERBOSE_LOG("Received chunk: offset %llu, size %llu", receiveOffset, chunkLength);
 
     // update progress
     sTotalDownloadBytes += wroteBytes;

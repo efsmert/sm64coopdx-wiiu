@@ -6,8 +6,10 @@
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
 #define SYNC_VALID_WIIU_LOG(...)
+#define SYNC_VALID_VERBOSE_LOG(...)
 #else
 #define SYNC_VALID_WIIU_LOG(...)
+#define SYNC_VALID_VERBOSE_LOG LOG_INFO
 #endif
 
 void network_send_sync_valid(struct NetworkPlayer* toNp, s16 courseNum, s16 actNum, s16 levelNum, s16 areaIndex) {
@@ -61,11 +63,11 @@ void network_send_sync_valid(struct NetworkPlayer* toNp, s16 courseNum, s16 actN
     packet_write(&p, &myGlobalIndex, sizeof(u8));
     network_send_to(toNp->localIndex, &p);
 
-    LOG_INFO("tx sync valid");
+    SYNC_VALID_VERBOSE_LOG("tx sync valid");
 }
 
 void network_receive_sync_valid(struct Packet* p) {
-    LOG_INFO("rx sync valid");
+    SYNC_VALID_VERBOSE_LOG("rx sync valid");
 
     s16 courseNum, actNum, levelNum, areaIndex;
     u8 fromGlobalIndex;
@@ -106,7 +108,7 @@ void network_receive_sync_valid(struct Packet* p) {
 
     // inform server
     if (fromGlobalIndex != gNetworkPlayerServer->globalIndex) {
-        LOG_INFO("informing server of sync valid");
+        SYNC_VALID_VERBOSE_LOG("informing server of sync valid");
         network_send_sync_valid(gNetworkPlayerServer, courseNum, actNum, levelNum, areaIndex);
     }
 

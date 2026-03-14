@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +8,14 @@
 #include "pc/lua/smlua.h"
 #include "pc/lua/smlua_utils.h"
 #include "pc/debuglog.h"
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define LUA_CUSTOM_TRACE(...)
+#else
+#define LUA_CUSTOM_TRACE(...)
+#endif
+
+static u32 sLuaCustomDebugPacketCount = 0;
 
 static void network_lnt_cleanup(struct LSTNetworkType* lnt) {
     if (lnt == NULL) { return; }
@@ -26,18 +35,10 @@ static void network_lua_custom_log_malformed(const char* stage) {
 
 static bool network_lua_trace_is_flood_mod(u16 modIndex, const char** outModName) {
     *outModName = "<invalid>";
-    if (modIndex >= gActiveMods.entryCount) { return false; }
-    struct Mod* mod = gActiveMods.entries[modIndex];
-    if (mod == NULL) { return false; }
-
-    if (mod->name != NULL && mod->name[0] != '\0') {
-        *outModName = mod->name;
-    } else if (mod->relativePath[0] != '\0') {
-        *outModName = mod->relativePath;
+    if (modIndex >= gActiveMods.entryCount) {
+        return false;
     }
-
-    return (mod->name != NULL && strstr(mod->name, "Flood") != NULL) ||
-           (strstr(mod->relativePath, "flood") != NULL);
+    return false;
 }
 
 static void network_lua_trace_format_lnt(const struct LSTNetworkType* lnt, char* buffer, size_t bufferSize) {
@@ -154,13 +155,26 @@ void network_send_lua_custom(bool broadcast) {
 }
 
 void network_receive_lua_custom(struct Packet* p) {
+    LUA_CUSTOM_TRACE("lua-custom-enter: local=%u gLuaState=%p dataLength=%u\n",
+                     (unsigned)p->localIndex,
+                     gLuaState,
+                     (unsigned)p->dataLength);
     lua_State* L = gLuaState;
     u16 modIndex = 0;
     u8  keyCount = 0;
     packet_read(p, &modIndex, sizeof(u16));
     packet_read(p, &keyCount, sizeof(u8));
+    LUA_CUSTOM_TRACE("lua-custom-header: local=%u mod=%u keyCount=%u\n",
+                     (unsigned)p->localIndex,
+                     (unsigned)modIndex,
+                     (unsigned)keyCount);
+    LOG_INFO("lua-custom: rx local=%u mod=%u keyCount=%u", (unsigned)p->localIndex, modIndex, keyCount);
     const char* modName = NULL;
     bool traceFlood = network_lua_trace_is_flood_mod(modIndex, &modName);
+    bool traceFirstMod = (modIndex == 0 && sLuaCustomDebugPacketCount < 8);
+    if (traceFirstMod) {
+        sLuaCustomDebugPacketCount++;
+    }
 
     if (!L) {
         LOG_ERROR("Received lua custom packet when lua is dead");
@@ -172,6 +186,12 @@ void network_receive_lua_custom(struct Packet* p) {
     for(u16 i = 0; i < keyCount; i++) {
         struct LSTNetworkType lntKey = { 0 };
         if (!packet_read_lnt(p, &lntKey) || p->error) {
+            if (traceFirstMod) {
+                LUA_CUSTOM_TRACE("lua-custom-malformed: stage=key pair=%u error=%d cursor=%u\n",
+                                 (unsigned)i,
+                                 p->error ? 1 : 0,
+                                 (unsigned)p->cursor);
+            }
             network_lua_custom_log_malformed("key");
             network_lnt_cleanup(&lntKey);
             goto cleanup;
@@ -179,17 +199,28 @@ void network_receive_lua_custom(struct Packet* p) {
 
         struct LSTNetworkType lntValue = { 0 };
         if (!packet_read_lnt(p, &lntValue) || p->error) {
+            if (traceFirstMod) {
+                LUA_CUSTOM_TRACE("lua-custom-malformed: stage=value pair=%u error=%d cursor=%u\n",
+                                 (unsigned)i,
+                                 p->error ? 1 : 0,
+                                 (unsigned)p->cursor);
+            }
             network_lua_custom_log_malformed("value");
             network_lnt_cleanup(&lntKey);
             network_lnt_cleanup(&lntValue);
             goto cleanup;
         }
 
-        if (traceFlood) {
+        if (traceFlood || traceFirstMod) {
             char keyBuf[80] = { 0 };
             char valueBuf[80] = { 0 };
             network_lua_trace_format_lnt(&lntKey, keyBuf, sizeof(keyBuf));
             network_lua_trace_format_lnt(&lntValue, valueBuf, sizeof(valueBuf));
+            LUA_CUSTOM_TRACE("lua-custom-pair: mod=%u pair=%u %s -> %s\n",
+                             (unsigned)modIndex,
+                             (unsigned)i,
+                             keyBuf,
+                             valueBuf);
             LOG_INFO("flood-trace: custom rx mod=%u(%s) pair[%u]=%s -> %s", modIndex, modName, i, keyBuf, valueBuf);
         }
 
@@ -202,11 +233,20 @@ void network_receive_lua_custom(struct Packet* p) {
     }
 
     if (p->error) {
+        if (traceFirstMod) {
+            LUA_CUSTOM_TRACE("lua-custom-malformed: stage=cursor error=%d cursor=%u\n",
+                             p->error ? 1 : 0,
+                             (unsigned)p->cursor);
+        }
         network_lua_custom_log_malformed("cursor");
         goto cleanup;
     }
 
-    if (traceFlood) {
+    if (traceFlood || traceFirstMod) {
+        LUA_CUSTOM_TRACE("lua-custom-dispatch: mod=%u local=%u keys=%u\n",
+                         (unsigned)modIndex,
+                         (unsigned)p->localIndex,
+                         (unsigned)keyCount);
         LOG_INFO("flood-trace: custom dispatch mod=%u(%s) local=%u keys=%u", modIndex, modName, p->localIndex, keyCount);
     }
     smlua_call_event_hooks(HOOK_ON_PACKET_RECEIVE, modIndex, tableIndex);
@@ -294,11 +334,20 @@ void network_send_lua_custom_bytestring(bool broadcast) {
 }
 
 void network_receive_lua_custom_bytestring(struct Packet* p) {
+    LUA_CUSTOM_TRACE("lua-bytes-enter: local=%u gLuaState=%p dataLength=%u\n",
+                     (unsigned)p->localIndex,
+                     gLuaState,
+                     (unsigned)p->dataLength);
     lua_State* L = gLuaState;
     u16 modIndex = 0;
     u16 bytestringLength = 0;
     packet_read(p, &modIndex, sizeof(u16));
     packet_read(p, &bytestringLength, sizeof(u16));
+    LUA_CUSTOM_TRACE("lua-bytes-header: local=%u mod=%u len=%u\n",
+                     (unsigned)p->localIndex,
+                     (unsigned)modIndex,
+                     (unsigned)bytestringLength);
+    LOG_INFO("lua-custom-bytes: rx local=%u mod=%u len=%u", (unsigned)p->localIndex, modIndex, bytestringLength);
     const char* modName = NULL;
     bool traceFlood = network_lua_trace_is_flood_mod(modIndex, &modName);
 

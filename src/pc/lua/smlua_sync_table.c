@@ -4,7 +4,14 @@
 #include "pc/mods/mod.h"
 #include "pc/mods/mods.h"
 #include "pc/network/network.h"
+#include <ctype.h>
 #include <string.h>
+#ifdef TARGET_WII_U
+#include <coreinit/debug.h>
+#define SMLUA_SYNC_TRACE(...)
+#else
+#define SMLUA_SYNC_TRACE(...)
+#endif
 
 #define MAX_UNWOUND_SIZE 256
 static struct LSTNetworkType sUnwoundLnts[MAX_UNWOUND_LNT] = { 0 };
@@ -164,10 +171,23 @@ static void smlua_sync_table_call_hook(int syncTableIndex, int keyIndex, int pre
     LUA_STACK_CHECK_END(L);
 }
 
+static bool smlua_sync_table_trace_should_log(const char* path) {
+    return path != NULL
+        && (strcmp(path, "gGlobalSyncTable.round_state") == 0
+            || strcmp(path, "gGlobalSyncTable.timer") == 0
+            || strcmp(path, "gGlobalSyncTable.padding") == 0
+            || strcmp(path, "gGlobalSyncTable.level") == 0);
+}
+
+static bool smlua_sync_table_trace_should_log_mod0(u16 modRemoteIndex) {
+    return false;
+}
+
 static bool smlua_sync_table_trace_is_flood_mod(const struct Mod* mod) {
-    if (mod == NULL) { return false; }
-    return (mod->name != NULL && strstr(mod->name, "Flood") != NULL) ||
-           (strstr(mod->relativePath, "flood") != NULL);
+    if (mod == NULL) {
+        return false;
+    }
+    return false;
 }
 
 static void smlua_sync_table_trace_build_path(char* buffer, size_t bufferSize, u16 lntKeyCount, struct LSTNetworkType* lntKeys) {
@@ -345,9 +365,32 @@ void smlua_set_sync_table_field_from_network(u64 seq, u16 modRemoteIndex, u16 ln
     }
     bool traceFlood = smlua_sync_table_trace_is_flood_mod(mod);
     char tracePath[192] = { 0 };
+    bool traceMod0 = false;
+    bool traceAny = false;
     if (traceFlood) {
         smlua_sync_table_trace_build_path(tracePath, sizeof(tracePath), lntKeyCount, lntKeys);
-        LOG_INFO("flood-trace: sync apply begin mod=%u(%s) seq=%llu path=%s value=%s", modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, tracePath, smlua_lnt_to_str(lntValue));
+        if (smlua_sync_table_trace_should_log(tracePath)) {
+            traceAny = true;
+            SMLUA_SYNC_TRACE("sync-apply-enter: mod=%u path=%s seqLo=%u value=%s\n",
+                             (unsigned)modRemoteIndex,
+                             tracePath,
+                             (unsigned)(seq & 0xffffffffu),
+                             smlua_lnt_to_str(lntValue));
+            LOG_INFO("flood-trace: sync apply begin mod=%u(%s) seq=%llu path=%s value=%s",
+                     modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, tracePath, smlua_lnt_to_str(lntValue));
+        }
+    }
+    if (!traceAny) {
+        smlua_sync_table_trace_build_path(tracePath, sizeof(tracePath), lntKeyCount, lntKeys);
+        traceMod0 = smlua_sync_table_trace_should_log_mod0(modRemoteIndex);
+        traceAny = traceMod0;
+        if (traceMod0) {
+            SMLUA_SYNC_TRACE("sync-apply-enter: mod=%u path=%s seqLo=%u value=%s\n",
+                             (unsigned)modRemoteIndex,
+                             tracePath,
+                             (unsigned)(seq & 0xffffffffu),
+                             smlua_lnt_to_str(lntValue));
+        }
     }
 
     // sanity check lntValue
@@ -366,12 +409,24 @@ void smlua_set_sync_table_field_from_network(u64 seq, u16 modRemoteIndex, u16 ln
     lua_getfield(L, LUA_REGISTRYINDEX, mod->relativePath); // get the file's "global" table
     lua_remove(L, -2); // remove global table
     int fileGlobalIndex = lua_gettop(L);
+    if (traceAny) {
+        SMLUA_SYNC_TRACE("sync-apply-registry: mod=%u rel=%s type=%d\n",
+                         (unsigned)modRemoteIndex,
+                         mod->relativePath,
+                         lua_type(L, fileGlobalIndex));
+    }
 
     // push global sync table
     u16 syncTableSize = 1;
     smlua_push_lnt(&lntKeys[lntKeyCount - 1]);
     lua_gettable(L, fileGlobalIndex);
     if (lua_type(L, -1) != LUA_TTABLE) {
+        if (traceAny) {
+            SMLUA_SYNC_TRACE("sync-apply-invalid-root: mod=%u path=%s gotType=%d\n",
+                             (unsigned)modRemoteIndex,
+                             tracePath,
+                             lua_type(L, -1));
+        }
         LOG_ERROR("Received sync table field packet with an invalid table");
         return;
     }
@@ -426,10 +481,18 @@ void smlua_set_sync_table_field_from_network(u64 seq, u16 modRemoteIndex, u16 ln
     lua_pop(L, 1); // pop seq value
 
     // validate seq
-    if (seq <= readSeq) {
+        if (seq <= readSeq) {
+        if (traceAny) {
+            SMLUA_SYNC_TRACE("sync-apply-skip: mod=%u path=%s seqLo=%u readSeqLo=%u\n",
+                             (unsigned)modRemoteIndex,
+                             tracePath,
+                             (unsigned)(seq & 0xffffffffu),
+                             (unsigned)(readSeq & 0xffffffffu));
+        }
         LOG_INFO("Received outdated sync table field packet: %llu <= %llu", seq, readSeq);
-        if (traceFlood) {
-            LOG_INFO("flood-trace: sync apply skipped outdated mod=%u(%s) seq=%llu readSeq=%llu path=%s", modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, readSeq, tracePath);
+        if (traceFlood && smlua_sync_table_trace_should_log(tracePath)) {
+            LOG_INFO("flood-trace: sync apply skipped outdated mod=%u(%s) seq=%llu readSeq=%llu path=%s",
+                     modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, readSeq, tracePath);
         }
         lua_pop(L, 1); // pop seq table
         lua_pop(L, syncTableSize); // pop sync table
@@ -463,8 +526,14 @@ void smlua_set_sync_table_field_from_network(u64 seq, u16 modRemoteIndex, u16 ln
     smlua_push_lnt(lntValue);
     int valueIndex = lua_gettop(L);
     smlua_sync_table_call_hook(syncTableIndex, keyIndex, prevValueIndex, valueIndex);
-    if (traceFlood) {
-        LOG_INFO("flood-trace: sync apply committed mod=%u(%s) seq=%llu path=%s value=%s", modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, tracePath, smlua_lnt_to_str(lntValue));
+    if (traceAny) {
+        SMLUA_SYNC_TRACE("sync-apply-commit: mod=%u path=%s seqLo=%u value=%s\n",
+                         (unsigned)modRemoteIndex,
+                         tracePath,
+                         (unsigned)(seq & 0xffffffffu),
+                         smlua_lnt_to_str(lntValue));
+        LOG_INFO("flood-trace: sync apply committed mod=%u(%s) seq=%llu path=%s value=%s",
+                 modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, tracePath, smlua_lnt_to_str(lntValue));
     }
     lua_pop(L, 1); // pop value
     lua_pop(L, 1); // pop key

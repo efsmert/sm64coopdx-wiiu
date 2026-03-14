@@ -31,11 +31,10 @@
 #include "pc/network/coopnet/coopnet_id.h"
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
-#define JOIN_WIIU_LOG(...) OSReport(__VA_ARGS__)
+#define JOIN_WIIU_TRACE(...) OSReport(__VA_ARGS__)
 #else
-#define JOIN_WIIU_LOG(...)
+#define JOIN_WIIU_TRACE(...)
 #endif
-
 extern u8* gOverrideEeprom;
 static u8 eeprom[512] = { 0 };
 
@@ -61,7 +60,7 @@ void network_send_join_request(void) {
     packet_write(&p, &configPlayerPalette, sizeof(struct PlayerPalette));
     packet_write_bytes(&p, &configPlayerName, sizeof(u8) * MAX_CONFIG_STRING);
 
-    network_send_to(network_get_server_local_index(), &p);
+    network_send_to((gNetworkPlayerServer != NULL) ? gNetworkPlayerServer->localIndex : 0, &p);
     LOG_INFO("sending join request");
 }
 
@@ -159,6 +158,8 @@ void network_receive_join(struct Packet* p) {
 #ifdef COOPNET
     coopnet_mark_client_join_progress("join_packet");
 #endif
+    JOIN_WIIU_TRACE("join-trace: network_receive_join begin localIndex=%u dataLength=%u\n",
+                    (unsigned)p->localIndex, (unsigned)p->dataLength);
     if (gNetworkPlayerLocal != NULL) { return; }
     LOG_INFO("received join packet");
     gCurrentlyJoining = true;
@@ -206,13 +207,9 @@ void network_receive_join(struct Packet* p) {
 
     network_player_connected(NPT_SERVER, 0, 0, &DEFAULT_MARIO_PALETTE, "Player", "0");
     network_player_connected(NPT_LOCAL, myGlobalIndex, configPlayerModel, &configPlayerPalette, configPlayerName, get_local_discord_id());
-    JOIN_WIIU_LOG(
-        "packet_join: rx myGlobal=%u localGlobal=%d serverLocal=%d model=%u name='%s'\n",
-        (unsigned)myGlobalIndex,
-        (gNetworkPlayerLocal != NULL) ? (int)gNetworkPlayerLocal->globalIndex : -1,
-        (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->localIndex : -1,
-        (unsigned)configPlayerModel,
-        configPlayerName);
+    JOIN_WIIU_TRACE("join-trace: players connected localGlobal=%u serverLocal=%d\n",
+                    (unsigned)myGlobalIndex,
+                    (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->localIndex : -1);
     djui_chat_box_create();
 
     save_file_load_all(TRUE);
@@ -222,33 +219,18 @@ void network_receive_join(struct Packet* p) {
 
     fake_lvl_init_from_save_file();
 
-    JOIN_WIIU_LOG("network: join packet activating remote mods=%d\n", gRemoteMods.entryCount);
     mods_activate(&gRemoteMods);
+    JOIN_WIIU_TRACE("join-trace: mods_activate done active=%u\n", (unsigned)gActiveMods.entryCount);
     djui_panel_modlist_create(NULL);
     smlua_init();
-
-    JOIN_WIIU_LOG(
-        "packet_join: pre-request netType=%d serverLocal=%d localGlobal=%d currentLevel=%d/%d/%d/%d\n",
-        (int)gNetworkType,
-        (int)network_get_server_local_index(),
-        (gNetworkPlayerLocal != NULL) ? (int)gNetworkPlayerLocal->globalIndex : -1,
-        (int)gCurrCourseNum,
-        (int)gCurrActStarNum,
-        (int)gCurrLevelNum,
-        (int)gCurrAreaIndex);
-    network_send_network_players_request();
-    JOIN_WIIU_LOG("packet_join: sent network_players_request\n");
-    network_send_lua_sync_table_request();
-    JOIN_WIIU_LOG("packet_join: sent lua_sync_table_request\n");
-
-    // Re-announce local cosmetics after join completes so the host can repair
-    // any stale/default player metadata it created during the provisional join.
-    JOIN_WIIU_LOG("packet_join: sending player_settings\n");
-    network_send_player_settings();
-    JOIN_WIIU_LOG("packet_join: player_settings sent\n");
-    JOIN_WIIU_LOG("packet_join: hooking custom behaviors\n");
+    JOIN_WIIU_TRACE("join-trace: smlua_init done\n");
     dynos_behavior_hook_all_custom_behaviors();
-    JOIN_WIIU_LOG("packet_join: custom behaviors hooked\n");
+    JOIN_WIIU_TRACE("join-trace: custom behaviors hooked\n");
+
+    network_send_network_players_request();
+    JOIN_WIIU_TRACE("join-trace: sent network_players_request\n");
+    network_send_lua_sync_table_request();
+    JOIN_WIIU_TRACE("join-trace: sent lua_sync_table_request\n");
 
     gCurrentlyJoining = false;
     smlua_call_event_hooks(HOOK_JOINED_GAME);

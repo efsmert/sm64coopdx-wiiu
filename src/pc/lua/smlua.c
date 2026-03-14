@@ -25,27 +25,8 @@ typedef void (*SmluaMemFreeToDefaultHeapFn)(void* ptr);
 extern SmluaMemAllocFromDefaultHeapExFn MEMAllocFromDefaultHeapEx;
 extern SmluaMemAllocFromDefaultHeapFn MEMAllocFromDefaultHeap;
 extern SmluaMemFreeToDefaultHeapFn MEMFreeToDefaultHeap;
-// Keep Wii U logging bounded so we can capture root errors without flooding Cemu.
-static u32 sSmluaWiiULogBudget = 128;
-static bool sSmluaWiiULogLimitNotified = false;
 static void smlua_wiiu_log_limited(const char* fmt, ...) {
-    if (fmt == NULL) {
-        return;
-    }
-    if (sSmluaWiiULogBudget == 0) {
-        if (!sSmluaWiiULogLimitNotified) {
-            sSmluaWiiULogLimitNotified = true;
-            OSReport("smlua: lua log budget reached, suppressing further lines\n");
-        }
-        return;
-    }
-    sSmluaWiiULogBudget--;
-    char buffer[512];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-    OSReport("%s", buffer);
+    (void)fmt;
 }
 #define SMLUA_WIIU_LOG(...) smlua_wiiu_log_limited(__VA_ARGS__)
 #else
@@ -72,10 +53,7 @@ void smlua_platform_log_lua(const char* text) {
 
 #ifdef TARGET_WII_U
 static void smlua_wiiu_step(const char* stage) {
-    if (stage == NULL) {
-        return;
-    }
-    OSReport("wiiu-lua-step:%s\n", stage);
+    (void)stage;
 }
 
 static int smlua_lua_panic(lua_State* L) {
@@ -561,10 +539,7 @@ void smlua_init(void) {
     smlua_shutdown();
 
 #ifdef TARGET_WII_U
-    sSmluaWiiULogBudget = 512;
-    sSmluaWiiULogLimitNotified = false;
     smlua_wiiu_step("init_begin");
-    LOG_INFO("wiiu-lua: smlua_init begin");
     SMLUA_WIIU_LOG("smlua: init begin\n");
 #endif
     #ifdef TARGET_WII_U
