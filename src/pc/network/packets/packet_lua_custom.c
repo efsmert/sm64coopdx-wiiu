@@ -168,7 +168,6 @@ void network_receive_lua_custom(struct Packet* p) {
                      (unsigned)p->localIndex,
                      (unsigned)modIndex,
                      (unsigned)keyCount);
-    LOG_INFO("lua-custom: rx local=%u mod=%u keyCount=%u", (unsigned)p->localIndex, modIndex, keyCount);
     const char* modName = NULL;
     bool traceFlood = network_lua_trace_is_flood_mod(modIndex, &modName);
     bool traceFirstMod = (modIndex == 0 && sLuaCustomDebugPacketCount < 8);
@@ -221,7 +220,6 @@ void network_receive_lua_custom(struct Packet* p) {
                              (unsigned)i,
                              keyBuf,
                              valueBuf);
-            LOG_INFO("flood-trace: custom rx mod=%u(%s) pair[%u]=%s -> %s", modIndex, modName, i, keyBuf, valueBuf);
         }
 
         smlua_push_lnt(&lntKey);
@@ -247,7 +245,6 @@ void network_receive_lua_custom(struct Packet* p) {
                          (unsigned)modIndex,
                          (unsigned)p->localIndex,
                          (unsigned)keyCount);
-        LOG_INFO("flood-trace: custom dispatch mod=%u(%s) local=%u keys=%u", modIndex, modName, p->localIndex, keyCount);
     }
     smlua_call_event_hooks(HOOK_ON_PACKET_RECEIVE, modIndex, tableIndex);
 cleanup:
@@ -347,7 +344,6 @@ void network_receive_lua_custom_bytestring(struct Packet* p) {
                      (unsigned)p->localIndex,
                      (unsigned)modIndex,
                      (unsigned)bytestringLength);
-    LOG_INFO("lua-custom-bytes: rx local=%u mod=%u len=%u", (unsigned)p->localIndex, modIndex, bytestringLength);
     const char* modName = NULL;
     bool traceFlood = network_lua_trace_is_flood_mod(modIndex, &modName);
 
@@ -376,7 +372,6 @@ void network_receive_lua_custom_bytestring(struct Packet* p) {
 
     // call hook
     if (traceFlood) {
-        LOG_INFO("flood-trace: bytestring dispatch mod=%u(%s) local=%u len=%u", modIndex, modName, p->localIndex, bytestringLength);
     }
     smlua_call_event_hooks(HOOK_ON_PACKET_BYTESTRING_RECEIVE, modIndex, bytestringIndex);
     lua_pop(L, 1); // pop bytestring

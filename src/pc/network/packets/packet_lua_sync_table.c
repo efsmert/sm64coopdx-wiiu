@@ -65,18 +65,6 @@ void network_send_lua_sync_table_request(void) {
                    (unsigned)serverLocalIndex,
                    (unsigned long long)coopnet_raw_get_id(0),
                    (unsigned long long)coopnet_raw_get_id(1));
-    lua_sync_wiiu_logf("lua-sync: tx request serverLocal=%u serverGlobal=%d hostUserId=%llu slot0=%llu slot1=%llu\n",
-                       (unsigned)serverLocalIndex,
-                       (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->globalIndex : -1,
-                       (unsigned long long)coopnet_raw_get_id(serverLocalIndex),
-                       (unsigned long long)coopnet_raw_get_id(0),
-                       (unsigned long long)coopnet_raw_get_id(1));
-    LOG_INFO("lua-sync: tx request serverLocal=%u serverGlobal=%d hostUserId=%llu slot0=%llu slot1=%llu",
-             (unsigned)serverLocalIndex,
-             (gNetworkPlayerServer != NULL) ? (int)gNetworkPlayerServer->globalIndex : -1,
-             (unsigned long long)coopnet_raw_get_id(serverLocalIndex),
-             (unsigned long long)coopnet_raw_get_id(0),
-             (unsigned long long)coopnet_raw_get_id(1));
     network_send_to(serverLocalIndex, &p);
     LOG_INFO("sending lua sync table request");
 }
@@ -84,14 +72,6 @@ void network_send_lua_sync_table_request(void) {
 void network_receive_lua_sync_table_request(struct Packet* p) {
     SOFT_ASSERT(gNetworkType == NT_SERVER);
     SOFT_ASSERT(p->localIndex < MAX_PLAYERS);
-    lua_sync_wiiu_logf("lua-sync: rx request local=%u global=%d connected=%d\n",
-                       (unsigned)p->localIndex,
-                       (p->localIndex < MAX_PLAYERS) ? (int)gNetworkPlayers[p->localIndex].globalIndex : -1,
-                       (p->localIndex < MAX_PLAYERS && gNetworkPlayers[p->localIndex].connected) ? 1 : 0);
-    LOG_INFO("lua-sync: rx request local=%u global=%d connected=%d",
-             (unsigned)p->localIndex,
-             (p->localIndex < MAX_PLAYERS) ? (int)gNetworkPlayers[p->localIndex].globalIndex : -1,
-             (p->localIndex < MAX_PLAYERS && gNetworkPlayers[p->localIndex].connected) ? 1 : 0);
     smlua_sync_table_send_all(p->localIndex);
     LOG_INFO("received lua sync table request");
 }

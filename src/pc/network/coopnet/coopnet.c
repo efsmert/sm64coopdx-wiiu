@@ -206,21 +206,6 @@ static void coopnet_on_receive(uint64_t userId, const uint8_t* data, uint64_t da
 #endif
         return;
     }
-    if (packetType == PACKET_NETWORK_PLAYERS
-        || packetType == PACKET_NETWORK_PLAYERS_REQUEST
-        || packetType == PACKET_LUA_SYNC_TABLE_REQUEST
-        || packetType == PACKET_LUA_SYNC_TABLE
-        || packetType == PACKET_LUA_CUSTOM
-        || packetType == PACKET_LUA_CUSTOM_BYTESTRING) {
-        LOG_INFO("coopnet-trace: rx packet=%u userId=%llu localIndex=%u slot0=%llu slot1=%llu slot2=%llu netType=%d",
-                 (unsigned)packetType,
-                 (unsigned long long)userId,
-                 (unsigned)localIndex,
-                 (unsigned long long)coopnet_raw_get_id(0),
-                 (unsigned long long)coopnet_raw_get_id(1),
-                 (unsigned long long)coopnet_raw_get_id(2),
-                 (int)gNetworkType);
-    }
     network_receive(localIndex, &userId, (u8*)data, dataLength);
 }
 

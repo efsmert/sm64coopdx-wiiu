@@ -31,7 +31,7 @@
 #include "pc/network/coopnet/coopnet_id.h"
 #ifdef TARGET_WII_U
 #include <coreinit/debug.h>
-#define JOIN_WIIU_TRACE(...) OSReport(__VA_ARGS__)
+#define JOIN_WIIU_TRACE(...)
 #else
 #define JOIN_WIIU_TRACE(...)
 #endif

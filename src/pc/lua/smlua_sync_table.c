@@ -376,8 +376,6 @@ void smlua_set_sync_table_field_from_network(u64 seq, u16 modRemoteIndex, u16 ln
                              tracePath,
                              (unsigned)(seq & 0xffffffffu),
                              smlua_lnt_to_str(lntValue));
-            LOG_INFO("flood-trace: sync apply begin mod=%u(%s) seq=%llu path=%s value=%s",
-                     modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, tracePath, smlua_lnt_to_str(lntValue));
         }
     }
     if (!traceAny) {
@@ -489,11 +487,6 @@ void smlua_set_sync_table_field_from_network(u64 seq, u16 modRemoteIndex, u16 ln
                              (unsigned)(seq & 0xffffffffu),
                              (unsigned)(readSeq & 0xffffffffu));
         }
-        LOG_INFO("Received outdated sync table field packet: %llu <= %llu", seq, readSeq);
-        if (traceFlood && smlua_sync_table_trace_should_log(tracePath)) {
-            LOG_INFO("flood-trace: sync apply skipped outdated mod=%u(%s) seq=%llu readSeq=%llu path=%s",
-                     modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, readSeq, tracePath);
-        }
         lua_pop(L, 1); // pop seq table
         lua_pop(L, syncTableSize); // pop sync table
         return;
@@ -532,8 +525,6 @@ void smlua_set_sync_table_field_from_network(u64 seq, u16 modRemoteIndex, u16 ln
                          tracePath,
                          (unsigned)(seq & 0xffffffffu),
                          smlua_lnt_to_str(lntValue));
-        LOG_INFO("flood-trace: sync apply committed mod=%u(%s) seq=%llu path=%s value=%s",
-                 modRemoteIndex, mod->name == NULL ? mod->relativePath : mod->name, seq, tracePath, smlua_lnt_to_str(lntValue));
     }
     lua_pop(L, 1); // pop value
     lua_pop(L, 1); // pop key

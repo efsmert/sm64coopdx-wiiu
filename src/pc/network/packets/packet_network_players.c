@@ -10,7 +10,7 @@
 #include <coreinit/debug.h>
 #include "pc/network/coopnet/coopnet_id.h"
 #define NETWORK_PLAYERS_WIIU_LOG(...)
-#define NETWORK_PLAYERS_TRACE(...) OSReport(__VA_ARGS__)
+#define NETWORK_PLAYERS_TRACE(...)
 #else
 #define NETWORK_PLAYERS_WIIU_LOG(...)
 #define NETWORK_PLAYERS_TRACE(...)
